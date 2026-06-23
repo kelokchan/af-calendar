@@ -273,6 +273,10 @@ function Lightbox({
   }, [onClose, handlePrev, handleNext]);
 
   const touchX = useRef<number | null>(null);
+  const onTouchStart = (e: React.TouchEvent) => {
+    // single finger only — a 2nd finger (pinch-zoom) nulls this so the swipe doesn't change slides
+    touchX.current = e.touches.length === 1 ? e.touches[0].clientX : null;
+  };
   const onTouchEnd = (e: React.TouchEvent) => {
     if (touchX.current === null) return;
     const dx = e.changedTouches[0].clientX - touchX.current;
@@ -285,7 +289,7 @@ function Lightbox({
   return createPortal(
     <div
       onClick={onClose}
-      onTouchStart={(e) => (touchX.current = e.touches[0].clientX)}
+      onTouchStart={onTouchStart}
       onTouchEnd={onTouchEnd}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4"
     >

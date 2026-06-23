@@ -53,6 +53,8 @@ export default async function Home() {
           items={SORTED.map((loc) => ({
             name: loc.name,
             handle: loc.handle,
+            lat: loc.lat,
+            lng: loc.lng,
             t: byHandle[loc.handle],
           }))}
         />

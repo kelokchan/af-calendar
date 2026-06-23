@@ -1,26 +1,95 @@
 @import "tailwindcss";
 
+/* Anytime Fitness — violet identity, NEOBRUTALIST language. Flat surfaces,
+   near-black borders, hard offset shadows (no blur), one loud accent.
+   Cool-tinted neutrals (chroma toward the brand hue ~305). OKLCH throughout. */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --canvas: oklch(0.93 0.045 305); /* flat violet wash — surfaces pop on it */
+  --surface: oklch(1 0 0); /* pure white cards */
+  --line: oklch(0.2 0.03 305); /* near-black border (the brutalist outline) */
+  --line-strong: oklch(0.16 0.03 305);
+  --ink: oklch(0.18 0.03 305); /* near-black text */
+  --muted: oklch(0.4 0.03 305); /* ≥4.5:1 on white */
+  --accent: oklch(0.56 0.26 305); /* loud AF violet */
+  --accent-ink: oklch(0.4 0.22 305); /* text-on-light variant */
+  --accent-soft: oklch(0.88 0.08 305);
+  --shadow: oklch(0.16 0.03 305); /* hard-shadow color (near-black) */
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --canvas: oklch(0.19 0.02 305);
+    --surface: oklch(0.25 0.022 305);
+    --line: oklch(0.97 0.008 305); /* light outline on dark */
+    --line-strong: oklch(1 0 0);
+    --ink: oklch(0.97 0.006 305);
+    --muted: oklch(0.74 0.018 305);
+    --accent: oklch(0.7 0.19 305);
+    --accent-ink: oklch(0.82 0.16 305);
+    --accent-soft: oklch(0.34 0.07 305);
+    --shadow: oklch(0.98 0.008 305); /* light hard shadow on dark */
   }
 }
 
+@theme inline {
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-soft: var(--accent-soft);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--canvas);
+  color: var(--ink);
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+}
+
+/* ---- Neobrutalist primitives -------------------------------------------------
+   nb-pop  : container — thick outline + hard offset shadow, lifts on hover.
+   nb-btn  : pressable — smaller shadow that collapses on :active (push-in).   */
+.nb-pop {
+  border: 2px solid var(--line);
+  box-shadow: 5px 5px 0 0 var(--shadow);
+  transition:
+    box-shadow 0.15s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.15s cubic-bezier(0.22, 1, 0.36, 1);
+}
+@media (hover: hover) {
+  .nb-pop:hover {
+    box-shadow: 8px 8px 0 0 var(--shadow);
+    transform: translate(-3px, -3px);
+  }
+}
+.nb-btn {
+  border: 2px solid var(--line);
+  box-shadow: 3px 3px 0 0 var(--shadow);
+  transition:
+    box-shadow 0.1s ease-out,
+    transform 0.1s ease-out;
+}
+@media (hover: hover) {
+  .nb-btn:hover {
+    box-shadow: 4px 4px 0 0 var(--shadow);
+    transform: translate(-1px, -1px);
+  }
+}
+.nb-btn:active {
+  box-shadow: 0 0 0 0 var(--shadow);
+  transform: translate(3px, 3px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }

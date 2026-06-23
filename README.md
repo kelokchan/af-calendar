@@ -1,36 +1,80 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# AF Calendar
 
-## Getting Started
+Monthly class timetables for Anytime Fitness gyms around Klang Valley, scraped
+from each club's Instagram and shown in one grid — sorted nearest-first to
+Kepong. Most clubs post their group-exercise (GX) schedule as a pinned image
+each month; this collects them so you don't have to open 40 Instagram profiles.
 
-First, run the development server:
+## How it works
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+```
+page (SSR)  ──reads──▶  Redis cache  ◀──writes──  /api/timetable (per profile)
+   │                        ▲                            │
+   │ instant first paint    │ month-keyed               │ Apify scrape → pick
+   ▼                        │                           ▼   schedule post
+ each Card ──lazy fetch──▶ /api/timetable          Vercel Blob (mirror images)
+ (on scroll, if uncached)                               │
+                                                        ▼
+                                          /api/img (proxy fallback, no Blob)
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+- **Apify** (`apify/instagram-scraper`) fetches a profile's recent posts. The
+  schedule is chosen by preferring a **pinned** post whose caption looks like a
+  timetable, falling back to keyword match, then any pinned post, then latest.
+- **Upstash Redis** caches each result under `af-cal:tt:<YYYY-MM>:<handle>`,
+  expiring at month end — so a profile is scraped at most once per month.
+  Successes live the whole month; errors are negative-cached ~6h so a
+  private/empty profile doesn't re-scrape on every load.
+- **Vercel Blob** mirrors the schedule images at scrape time. Instagram's CDN
+  URLs are signed and expire in ~4 days, so caching them a month would break
+  every image mid-month; Blob copies are permanent.
+- **First paint never blocks on a scrape** — SSR renders from cache only, and
+  each card lazy-fetches its own profile when it scrolls into view. A cold month
+  fills in card-by-card instead of one slow batch.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Setup
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npm install
+cp .env.example .env   # fill in the values below
+npm run dev
+```
 
-## Learn More
+Open <http://localhost:3000>.
 
-To learn more about Next.js, take a look at the following resources:
+### Environment
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+| Variable                                              | Required    | Purpose                                                                                                                                                                                |
+| ----------------------------------------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `APIFY_TOKEN`                                         | yes         | Instagram scraping via Apify. The only fetch path.                                                                                                                                     |
+| `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` | on Vercel   | Timetable cache. Without it every request re-scrapes (fine for local dev).                                                                                                             |
+| `BLOB_READ_WRITE_TOKEN`                               | recommended | Mirrors images to Vercel Blob so they survive the month. Auto-set by the Vercel Blob integration. Without it, images fall back to live IG URLs via `/api/img` and break after ~4 days. |
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Get tokens: [Apify](https://console.apify.com/account/integrations) ·
+[Upstash](https://console.upstash.com/redis) ·
+[Vercel Blob](https://vercel.com/dashboard/stores).
 
-## Deploy on Vercel
+## Editing the gym list
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Locations live in [`lib/locations.ts`](lib/locations.ts) — `{ handle, name, lat,
+lng }` per club. The grid sorts by distance to Kepong (`KEPONG` in the same
+file). Add/remove entries there.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Cache admin
+
+Flush the current month (forces a clean re-scrape, e.g. after changing the
+schedule-picking logic):
+
+```bash
+node -e 'const{Redis}=require("@upstash/redis");const fs=require("fs");for(const l of fs.readFileSync(".env","utf8").split("\n")){const m=l.match(/^([A-Z_]+)=(.*)$/);if(m)process.env[m[1]]=m[2].replace(/^["'\'']|["'\'']$/g,"")}const r=Redis.fromEnv();const mo=new Date().toISOString().slice(0,7);r.keys(`af-cal:tt:${mo}:*`).then(k=>k.length?r.del(...k):0).then(n=>console.log("flushed",n))'
+```
+
+## Deploy
+
+Deploy on [Vercel](https://vercel.com/new). Add the Upstash Redis and Vercel
+Blob integrations (they inject the env vars), set `APIFY_TOKEN`, and ship. The
+read-only filesystem is fine — all state is in Redis and Blob.
+
+## Stack
+
+Next.js (App Router) · React · Tailwind CSS · Upstash Redis · Vercel Blob · Apify

@@ -95,7 +95,8 @@ async function fetchViaApify(handles: string[]): Promise<Timetable[]> {
       body: JSON.stringify({
         directUrls: handles.map((h) => `https://www.instagram.com/${h}/`),
         resultsType: "posts",
-        resultsLimit: 12, // per profile
+        resultsLimit: 4, // per profile; viewed early month, fresh timetable sits at top
+        onlyPostsNewerThan: "2 months", // stop early on active gyms — fewer billed results
         addParentData: false,
       }),
       // ponytail: cap the sync scrape so a stuck Apify run can't hang the request

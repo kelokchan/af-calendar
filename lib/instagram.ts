@@ -80,6 +80,9 @@ type ApifyItem = {
   url?: string;
   displayUrl?: string;
   images?: string[];
+  childPosts?: {
+    displayUrl?: string;
+  }[];
   timestamp?: string;
   type?: string;
   isPinned?: boolean;
@@ -112,11 +115,13 @@ async function fetchViaApify(handles: string[]): Promise<Timetable[]> {
   for (const it of items) {
     const u = it.ownerUsername;
     if (!u) continue;
-    const images = it.images?.length
-      ? it.images
-      : it.displayUrl
-        ? [it.displayUrl]
-        : [];
+    const images = it.childPosts?.length
+      ? (it.childPosts.map((c) => c.displayUrl).filter(Boolean) as string[])
+      : it.images?.length
+        ? it.images
+        : it.displayUrl
+          ? [it.displayUrl]
+          : [];
     const post: Post = {
       caption: it.caption ?? "",
       images: images.map(cdnUrl),

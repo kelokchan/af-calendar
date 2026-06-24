@@ -1,7 +1,8 @@
 // Instagram fetch via Apify (apify/instagram-scraper) — paid per result, but
-// results live in Redis cached for the whole calendar month, so a profile is
-// only scraped once per month (timetables are monthly). Cards fetch on demand
-// (one profile per request); new month → keys expire → re-scraped as viewed.
+// results live in Redis cached for the whole week, so a profile is only scraped
+// once per week (gyms post a fresh weekly timetable each Sunday night). Cards
+// fetch on demand (one profile per request); each Sunday-night rollover → keys
+// expire → re-scraped as viewed. A force-refresh re-scrapes a profile on demand.
 
 import { Redis } from "@upstash/redis";
 import { put } from "@vercel/blob";
@@ -98,7 +99,7 @@ async function fetchViaApify(handles: string[]): Promise<Timetable[]> {
       body: JSON.stringify({
         directUrls: handles.map((h) => `https://www.instagram.com/${h}/`),
         resultsType: "posts",
-        resultsLimit: 4, // per profile; viewed early month, fresh timetable sits at top
+        resultsLimit: 4, // per profile; the fresh weekly timetable sits at top
         onlyPostsNewerThan: "2 months", // stop early on active gyms — fewer billed results
         addParentData: false,
       }),
@@ -137,16 +138,22 @@ async function fetchViaApify(handles: string[]): Promise<Timetable[]> {
 }
 
 // ---- Redis cache ------------------------------------------------------------
-// One key per (month, location): `af-cal:tt:YYYY-MM:<handle>`, expiring at month
-// end (UTC). A cached handle is never re-scraped that month; month rollover ⇒
-// new key namespace ⇒ rebuild. Per-key (vs one blob) means concurrent renders
-// never clobber each other's writes, and only scraped handles are written.
-// Successes live to month end; errors are negative-cached for ERROR_TTL so a
-// private/renamed/empty profile doesn't re-scrape Apify (slow, sync) on EVERY
-// page load — it retries a few times a day instead. Upstash REST works on
-// Vercel's read-only FS.
+// One key per (week, location): `af-cal:tt:YYYY-MM-DD:<handle>`, where the date
+// is the Monday that opens the cache week (MYT) and the key expires at the next
+// Sunday-night boundary. Gyms post a fresh weekly timetable each Sunday night,
+// so a handle is scraped at most once per week; week rollover ⇒ new key
+// namespace ⇒ everyone re-scrapes the new week's schedule automatically.
+// Per-key (vs one blob) means concurrent renders never clobber each other's
+// writes, and only scraped handles are written. Successes live to week end;
+// errors are negative-cached for ERROR_TTL so a private/renamed/empty profile
+// doesn't re-scrape Apify (slow, sync) on EVERY page load — it retries a few
+// times a day instead. Upstash REST works on Vercel's read-only FS.
 
 const ERROR_TTL = 6 * 60 * 60; // seconds; transient empties recover same day
+
+// These gyms are in Malaysia (UTC+8, no DST), so "Sunday night" is anchored to
+// MYT, not UTC — a UTC boundary would roll the cache mid-Sunday-afternoon local.
+const MYT_OFFSET = 8 * 60 * 60 * 1000;
 
 // ponytail: null when creds absent (local dev) so import doesn't throw; cache
 // then no-ops and every request scrapes. Set creds to actually persist.
@@ -155,16 +162,37 @@ const redis =
     ? Redis.fromEnv()
     : null;
 
-const keyFor = (handle: string) =>
-  `af-cal:tt:${new Date().toISOString().slice(0, 7)}:${handle}`; // YYYY-MM (UTC)
-
-// Seconds until the start of next month (UTC) — Redis evicts the key then.
-function secsToMonthEnd(): number {
-  const now = Date.now();
-  const d = new Date(now);
-  const next = Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1);
-  return Math.ceil((next - now) / 1000);
+// The week's anchor: the Monday 00:00 MYT that opens the current cache week
+// (i.e. the boundary right after the previous Sunday night). Returns both a
+// stable namespace label and the seconds left until the *next* Sunday-night
+// rollover so cache TTL and key share one source of truth.
+function weekAnchor(now: number = Date.now()): {
+  label: string;
+  expiresInSecs: number;
+} {
+  // Shift into MYT wall-clock: reading UTC fields of the shifted date yields
+  // Malaysian local Y/M/D/day.
+  const myt = new Date(now + MYT_OFFSET);
+  const sinceMon = (myt.getUTCDay() + 6) % 7; // days since this week's Monday
+  // Monday 00:00 of the current MYT week, expressed as an "as-if-UTC" instant.
+  const mondayAsUtc = Date.UTC(
+    myt.getUTCFullYear(),
+    myt.getUTCMonth(),
+    myt.getUTCDate() - sinceMon,
+  );
+  const label = new Date(mondayAsUtc).toISOString().slice(0, 10); // YYYY-MM-DD
+  // Next Monday 00:00 MYT, back in real epoch ms, is when Redis evicts the key.
+  const nextRollover = mondayAsUtc + 7 * 24 * 60 * 60 * 1000 - MYT_OFFSET;
+  return {
+    label,
+    expiresInSecs: Math.max(1, Math.ceil((nextRollover - now) / 1000)),
+  };
 }
+
+const keyFor = (handle: string) => `af-cal:tt:${weekAnchor().label}:${handle}`;
+
+// Seconds until the next Sunday-night rollover (MYT) — Redis evicts the key then.
+const secsToWeekEnd = (): number => weekAnchor().expiresInSecs;
 
 async function readCache(
   handles: string[],
@@ -187,10 +215,10 @@ async function readCache(
 async function writeCache(entries: Timetable[]): Promise<void> {
   if (!redis || !entries.length) return;
   try {
-    const monthEx = secsToMonthEnd();
+    const weekEx = secsToWeekEnd();
     const p = redis.pipeline();
     for (const t of entries) {
-      p.set(keyFor(t.handle), t, { ex: t.error ? ERROR_TTL : monthEx });
+      p.set(keyFor(t.handle), t, { ex: t.error ? ERROR_TTL : weekEx });
     }
     await p.exec();
   } catch {
@@ -209,15 +237,17 @@ export async function getCached(
 }
 
 // Mirror IG CDN images into Vercel Blob. IG signs its URLs with a ~4-day `oe=`
-// expiry, but we cache a month — so the raw URLs die mid-month and every card
-// breaks. Blob URLs are permanent, so the cached timetable stays viewable all
-// month. No token (local dev) → return IG URLs unchanged (served via /api/img).
+// expiry, but we cache a week — so the raw URLs can die before the entry does
+// and every card breaks. Blob URLs are permanent, so the cached timetable stays
+// viewable all week. Pathed by the cache week so each week's scrape writes fresh
+// URLs (a force-refresh or rollover never serves a stale-cached old image).
+// No token (local dev) → return IG URLs unchanged (served via /api/img).
 async function persistImages(
   handle: string,
   urls: string[],
 ): Promise<string[]> {
   if (!process.env.BLOB_READ_WRITE_TOKEN || !urls.length) return urls;
-  const month = new Date().toISOString().slice(0, 7);
+  const week = weekAnchor().label;
   return Promise.all(
     urls.map(async (u, i) => {
       try {
@@ -229,7 +259,7 @@ async function persistImages(
           signal: AbortSignal.timeout(15_000),
         });
         if (!res.ok) return u; // fall back to IG URL (proxy can still try)
-        const { url } = await put(`tt/${month}/${handle}-${i}.jpg`, res.body!, {
+        const { url } = await put(`tt/${week}/${handle}-${i}.jpg`, res.body!, {
           access: "public",
           allowOverwrite: true,
           contentType: res.headers.get("content-type") ?? "image/jpeg",
@@ -245,13 +275,22 @@ async function persistImages(
 // Single handle: cache hit → return; else scrape just this one profile, mirror
 // its images to Blob, cache, return. One Apify run per profile keeps each card
 // independent and fast.
-export async function fetchTimetable(handle: string): Promise<Timetable> {
-  const cached = await readCache([handle]);
-  if (cached[handle]) return cached[handle];
+//
+// `force` skips the read (not the write): when a gym posts an updated schedule
+// mid-week the week-TTL cache still holds the older image, so a user-driven
+// refresh bypasses the cache, re-scrapes, and overwrites the stale entry.
+export async function fetchTimetable(
+  handle: string,
+  force = false,
+): Promise<Timetable> {
+  if (!force) {
+    const cached = await readCache([handle]);
+    if (cached[handle]) return cached[handle];
+  }
   try {
     const [t] = await fetchViaApify([handle]);
     if (!t.error) t.images = await persistImages(handle, t.images);
-    // real timetable → month TTL; "no posts" → ERROR_TTL (negative-cached).
+    // real timetable → week TTL; "no posts" → ERROR_TTL (negative-cached).
     await writeCache([t]);
     return t;
   } catch (e) {

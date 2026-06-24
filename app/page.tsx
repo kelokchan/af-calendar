@@ -10,7 +10,14 @@ const SORTED = [...LOCATIONS].sort(
     ((b.lat - KEPONG.lat) ** 2 + (b.lng - KEPONG.lng) ** 2),
 );
 
-export const revalidate = 86400; // rebuild grid daily (timetables change monthly)
+// Rebuild the grid hourly. This does NOT scrape Apify — getCached is a read-only
+// Redis mget; Apify only runs on a cache miss (once per handle per week) or a
+// force refresh. Timetables refresh weekly (Sunday-night cache rollover, see
+// lib/instagram), but the SSR shell bakes in whatever's cached at build time, so
+// a daily rebuild could keep serving last week's images for up to 24h after the
+// rollover. Hourly just lets the shell pick up the new week's cached data
+// promptly; uncached cards still self-fetch client-side.
+export const revalidate = 3600;
 
 const MONTH = new Date().toLocaleString("en-US", {
   month: "long",

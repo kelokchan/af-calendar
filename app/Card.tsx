@@ -26,18 +26,26 @@ export default function Card({
   const [open, setOpen] = useState(false);
   const [cardImageLoading, setCardImageLoading] = useState(true);
 
-  const load = useCallback(() => {
-    setLoading(true);
-    return fetch(`/api/timetable?handle=${encodeURIComponent(handle)}`)
-      .then((r) => r.json())
-      .then((d: Timetable) => {
-        setT(d);
-        setI(d.images.length > 1 ? 1 : 0);
-        setCardImageLoading(true);
-      })
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, [handle]);
+  // force → append ?refresh=1 so the server bypasses the month cache and
+  // re-scrapes (gym posted a new schedule mid-month). User-driven actions
+  // (refresh button, retry) force; the on-scroll auto-fetch never does.
+  const load = useCallback(
+    (force = false) => {
+      setLoading(true);
+      return fetch(
+        `/api/timetable?handle=${encodeURIComponent(handle)}${force ? "&refresh=1" : ""}`,
+      )
+        .then((r) => r.json())
+        .then((d: Timetable) => {
+          setT(d);
+          setI(d.images.length > 1 ? 1 : 0);
+          setCardImageLoading(true);
+        })
+        .catch(() => {})
+        .finally(() => setLoading(false));
+    },
+    [handle],
+  );
 
   // Fetch only once the card scrolls near the viewport — staggers the scrape so
   // a cold month doesn't fire 42 Apify runs at once, and skips profiles never seen.
@@ -88,22 +96,48 @@ export default function Card({
             @{handle}
           </a>
         </div>
-        {loading ? (
-          <span className="shrink-0 animate-pulse rounded-md border-2 border-line bg-surface px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wide text-muted shadow-[2px_2px_0_0_var(--shadow)]">
-            loading
-          </span>
-        ) : t?.matchedMonth ? (
-          <span className="inline-flex shrink-0 items-center gap-1 rounded-md border-2 border-line bg-accent px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wide text-white shadow-[2px_2px_0_0_var(--shadow)]">
-            <span className="h-1.5 w-1.5 rounded-full bg-white" />
-            timetable
-          </span>
-        ) : (
-          images.length > 0 && (
-            <span className="shrink-0 rounded-md border-2 border-line bg-surface px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wide text-ink shadow-[2px_2px_0_0_var(--shadow)]">
-              latest
+        <div className="flex shrink-0 items-center gap-2">
+          {loading ? (
+            <span className="animate-pulse rounded-md border-2 border-line bg-surface px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wide text-muted shadow-[2px_2px_0_0_var(--shadow)]">
+              loading
             </span>
-          )
-        )}
+          ) : t?.matchedMonth ? (
+            <span className="inline-flex items-center gap-1 rounded-md border-2 border-line bg-accent px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wide text-white shadow-[2px_2px_0_0_var(--shadow)]">
+              <span className="h-1.5 w-1.5 rounded-full bg-white" />
+              timetable
+            </span>
+          ) : (
+            images.length > 0 && (
+              <span className="rounded-md border-2 border-line bg-surface px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wide text-ink shadow-[2px_2px_0_0_var(--shadow)]">
+                latest
+              </span>
+            )
+          )}
+          {/* Force re-scrape: bypasses the month cache when a gym posts an
+              updated schedule mid-month and the card still shows last week's. */}
+          <button
+            type="button"
+            onClick={() => load(true)}
+            disabled={loading}
+            aria-label="Force refresh"
+            title="Force refresh — re-fetch latest schedule"
+            className="flex h-7 w-7 items-center justify-center rounded-md border-2 border-line bg-surface text-ink shadow-[2px_2px_0_0_var(--shadow)] transition-all hover:bg-accent hover:text-white active:translate-x-[2px] active:translate-y-[2px] active:shadow-none disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden
+              className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`}
+            >
+              <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+              <path d="M21 3v6h-6" />
+            </svg>
+          </button>
+        </div>
       </div>
 
       <div className="group relative aspect-[4/5] w-full overflow-hidden border-y-2 border-line bg-canvas">

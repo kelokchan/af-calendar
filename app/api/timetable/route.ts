@@ -7,5 +7,8 @@ export async function GET(req: NextRequest) {
   const handle = req.nextUrl.searchParams.get("handle");
   if (!handle)
     return Response.json({ error: "missing handle" }, { status: 400 });
-  return Response.json(await fetchTimetable(handle));
+  // ?refresh=1 → bypass the month cache and re-scrape (gym posted a new
+  // schedule mid-month). User-driven only, so the extra Apify cost is bounded.
+  const force = req.nextUrl.searchParams.get("refresh") === "1";
+  return Response.json(await fetchTimetable(handle, force));
 }

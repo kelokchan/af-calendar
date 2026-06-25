@@ -69,7 +69,9 @@ function choose(handle: string, posts: Post[]): Timetable {
     caption: match.caption,
     postUrl: match.url,
     takenAt: match.takenAt,
-    matchedMonth: looksLikeTimetable(match.caption),
+    // Caption-less schedules are common; a pinned post is the gym's current
+    // timetable by convention, so trust the pin even without keyword match.
+    matchedMonth: looksLikeTimetable(match.caption) || match.pinned,
   };
 }
 
@@ -121,7 +123,7 @@ async function fetchViaApify(
       ? [opts.postUrl]
       : handles.map((h) => `https://www.instagram.com/${h}/`),
     resultsType: "posts",
-    resultsLimit: opts.limit ?? 4, // per profile; the fresh weekly timetable sits at top
+    resultsLimit: opts.limit ?? 12, // per profile; deeper window so a buried monthly schedule (sunk below newer promos) stays reachable. Age cap below bounds the cost.
     addParentData: false,
   };
   // Default profile scrape only → cap by age to cut billed results. A forced
@@ -230,6 +232,30 @@ async function readCache(
   }
 }
 
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+
+// A re-scrape that didn't land on a real timetable (keyword or pinned) is
+// low-confidence — usually the newest unrelated promo after a monthly studio's
+// schedule sank below the fetch window. Prefer a previously confident entry
+// over clobbering it: check this week's key, then last week's (survives the
+// Sunday rollover). null if no confident prior exists. Old-week Blob image URLs
+// stay valid (permanent), so a carried-over entry still renders.
+async function readPriorConfident(handle: string): Promise<Timetable | null> {
+  if (!redis) return null;
+  const keys = [
+    keyFor(handle),
+    `af-cal:tt:${weekAnchor(Date.now() - WEEK_MS).label}:${handle}`,
+  ];
+  try {
+    const vals = (await redis.mget<Timetable[]>(
+      ...keys,
+    )) as (Timetable | null)[];
+    return vals.find((v) => v && !v.error && v.matchedMonth) ?? null;
+  } catch {
+    return null;
+  }
+}
+
 async function writeCache(entries: Timetable[]): Promise<void> {
   if (!redis || !entries.length) return;
   try {
@@ -311,6 +337,17 @@ export async function fetchTimetable(
       postUrl: opts.postUrl,
       limit: opts.limit,
     });
+    // Non-match scrape (error, or just the newest unrelated post) shouldn't
+    // overwrite a confident schedule we already have — keep the prior instead,
+    // re-anchored into this week's key so it survives the rollover. An explicit
+    // post-link force is intentional, so it bypasses this and stands as picked.
+    if (!opts.postUrl && !t.matchedMonth) {
+      const prior = await readPriorConfident(handle);
+      if (prior) {
+        await writeCache([prior]);
+        return prior;
+      }
+    }
     if (!t.error) t.images = await persistImages(handle, t.images);
     // real timetable → week TTL; "no posts" → ERROR_TTL (negative-cached).
     await writeCache([t]);

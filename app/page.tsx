@@ -40,7 +40,7 @@ export default async function Home() {
               AF
             </span>
             <div>
-              <h1 className="text-base font-bold uppercase leading-tight tracking-tight text-ink sm:text-lg">
+              <h1 className="text-base font-semibold leading-tight tracking-tight text-ink sm:text-lg">
                 Class Timetables
               </h1>
               <p className="font-mono text-[11px] uppercase tracking-wider text-muted">
@@ -49,7 +49,7 @@ export default async function Home() {
             </div>
           </div>
 
-          <span className="inline-flex items-center gap-1.5 rounded-md border-2 border-line bg-surface px-3 py-1.5 font-mono text-xs font-bold uppercase tracking-wide text-ink shadow-[3px_3px_0_0_var(--shadow)]">
+          <span className="inline-flex items-center gap-1.5 rounded-md border-2 border-line bg-surface px-3 py-1.5 font-mono text-xs font-bold uppercase tracking-wide text-ink">
             {MONTH}
           </span>
         </div>

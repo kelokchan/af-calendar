@@ -58,7 +58,7 @@ export default function Grid({ items }: { items: Item[] }) {
           placeholder="Search gyms…"
           className="w-full max-w-sm rounded-md border-2 border-line bg-surface px-3 py-2 text-sm font-medium text-ink shadow-[3px_3px_0_0_var(--shadow)] transition-shadow placeholder:font-normal placeholder:text-muted focus:shadow-[5px_5px_0_0_var(--accent)] focus:outline-none"
         />
-        <span className="inline-flex items-center gap-1.5 rounded-md border-2 border-line bg-surface px-2.5 py-1 font-mono text-[10px] font-bold uppercase tracking-wide text-muted shadow-[2px_2px_0_0_var(--shadow)]">
+        <span className="inline-flex items-center gap-1.5 rounded-md border-2 border-line bg-surface px-2.5 py-1 font-mono text-[10px] font-bold uppercase tracking-wide text-muted">
           <span
             aria-hidden
             className={`h-1.5 w-1.5 rounded-full ${origin ? "bg-accent" : "bg-muted/50"}`}

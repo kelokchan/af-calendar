@@ -4,15 +4,17 @@
    near-black borders, hard offset shadows (no blur), one loud accent.
    Cool-tinted neutrals (chroma toward the brand hue ~305). OKLCH throughout. */
 :root {
-  --canvas: oklch(0.93 0.045 305); /* flat violet wash — surfaces pop on it */
+  --canvas: oklch(
+    0.95 0.022 305
+  ); /* calm violet wash — surfaces sit quietly on it */
   --surface: oklch(1 0 0); /* pure white cards */
-  --line: oklch(0.2 0.03 305); /* near-black border (the brutalist outline) */
+  --line: oklch(0.22 0.028 305); /* near-black border (the brutalist outline) */
   --line-strong: oklch(0.16 0.03 305);
   --ink: oklch(0.18 0.03 305); /* near-black text */
   --muted: oklch(0.4 0.03 305); /* ≥4.5:1 on white */
-  --accent: oklch(0.56 0.26 305); /* loud AF violet */
-  --accent-ink: oklch(0.4 0.22 305); /* text-on-light variant */
-  --accent-soft: oklch(0.88 0.08 305);
+  --accent: oklch(0.55 0.205 305); /* AF violet — confident, not neon */
+  --accent-ink: oklch(0.42 0.18 305); /* text-on-light variant */
+  --accent-soft: oklch(0.9 0.05 305);
   --shadow: oklch(0.16 0.03 305); /* hard-shadow color (near-black) */
 }
 
@@ -24,9 +26,9 @@
     --line-strong: oklch(1 0 0);
     --ink: oklch(0.97 0.006 305);
     --muted: oklch(0.74 0.018 305);
-    --accent: oklch(0.7 0.19 305);
-    --accent-ink: oklch(0.82 0.16 305);
-    --accent-soft: oklch(0.34 0.07 305);
+    --accent: oklch(0.68 0.16 305);
+    --accent-ink: oklch(0.82 0.14 305);
+    --accent-soft: oklch(0.34 0.06 305);
     --shadow: oklch(0.98 0.008 305); /* light hard shadow on dark */
   }
 }
@@ -56,15 +58,15 @@ body {
    nb-btn  : pressable — smaller shadow that collapses on :active (push-in).   */
 .nb-pop {
   border: 2px solid var(--line);
-  box-shadow: 5px 5px 0 0 var(--shadow);
+  box-shadow: 4px 4px 0 0 var(--shadow);
   transition:
     box-shadow 0.15s cubic-bezier(0.22, 1, 0.36, 1),
     transform 0.15s cubic-bezier(0.22, 1, 0.36, 1);
 }
 @media (hover: hover) {
   .nb-pop:hover {
-    box-shadow: 8px 8px 0 0 var(--shadow);
-    transform: translate(-3px, -3px);
+    box-shadow: 5px 5px 0 0 var(--shadow);
+    transform: translate(-1px, -1px);
   }
 }
 .nb-btn {

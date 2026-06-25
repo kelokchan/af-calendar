@@ -30,7 +30,7 @@ export default function Card({
   // so the grid fills card-by-card instead of blocking on a full batch scrape.
   const [t, setT] = useState<Timetable | undefined>(initialT);
   const [loading, setLoading] = useState(!initialT);
-  const [i, setI] = useState((initialT?.images.length ?? 0) > 1 ? 1 : 0); // carousel cover often a banner; 2nd usually the schedule
+  const [i, setI] = useState(0); // default to first slide
   const [open, setOpen] = useState(false);
   const [forceOpen, setForceOpen] = useState(false);
   const [cardImageLoading, setCardImageLoading] = useState(true);
@@ -78,6 +78,7 @@ export default function Card({
   }, [initialT, load]);
 
   const images = t?.images ?? [];
+  const caption = t?.caption?.trim() ?? "";
   const idx = Math.min(i, Math.max(0, images.length - 1));
   const prev = () => {
     setCardImageLoading(true);
@@ -91,7 +92,7 @@ export default function Card({
   return (
     <div
       ref={ref}
-      className="nb-pop group/card flex flex-col overflow-hidden rounded-lg bg-surface"
+      className="nb-pop flex flex-col overflow-hidden rounded-lg bg-surface"
     >
       <div className="flex h-[60px] items-center justify-between gap-2 px-4 py-3">
         <div className="min-w-0">
@@ -102,24 +103,36 @@ export default function Card({
             href={`https://instagram.com/${handle}`}
             target="_blank"
             rel="noopener noreferrer"
-            className="font-mono text-[11px] text-muted transition-colors hover:text-accent-ink"
+            className="inline-flex items-center gap-0.5 font-mono text-[11px] text-muted underline decoration-dotted underline-offset-2 transition-colors hover:text-accent-ink"
           >
             @{handle}
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="h-2.5 w-2.5 shrink-0"
+              aria-hidden="true"
+            >
+              <path d="M7 17 17 7M9 7h8v8" />
+            </svg>
           </a>
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {loading ? (
-            <span className="animate-pulse rounded-md border-2 border-line bg-surface px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wide text-muted shadow-[2px_2px_0_0_var(--shadow)]">
+            <span className="animate-pulse rounded-md border-2 border-line bg-surface px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wide text-muted">
               loading
             </span>
           ) : t?.matchedMonth ? (
-            <span className="inline-flex items-center gap-1 rounded-md border-2 border-line bg-accent px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wide text-white shadow-[2px_2px_0_0_var(--shadow)]">
+            <span className="inline-flex items-center gap-1 rounded-md border-2 border-line bg-accent px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wide text-white">
               <span className="h-1.5 w-1.5 rounded-full bg-white" />
               timetable
             </span>
           ) : (
             images.length > 0 && (
-              <span className="rounded-md border-2 border-line bg-surface px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wide text-ink shadow-[2px_2px_0_0_var(--shadow)]">
+              <span className="rounded-md border-2 border-line bg-surface px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wide text-ink">
                 latest
               </span>
             )
@@ -157,10 +170,18 @@ export default function Card({
                 }}
                 onLoad={() => setCardImageLoading(false)}
                 onError={() => setCardImageLoading(false)}
-                className="h-full w-full object-contain transition-transform duration-500 ease-out group-hover/card:scale-[1.02]"
+                className="h-full w-full object-contain"
               />
             </button>
-            {cardImageLoading && (
+            {loading && (
+              <div className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-canvas/75 backdrop-blur-[2px]">
+                <div className="h-12 w-12 animate-spin rounded-full border-4 border-accent-soft border-t-accent" />
+                <span className="animate-pulse rounded-md border-2 border-line bg-surface px-3 py-1 font-mono text-[11px] font-bold uppercase tracking-wide text-accent-ink shadow-[2px_2px_0_0_var(--shadow)]">
+                  Re-scraping…
+                </span>
+              </div>
+            )}
+            {cardImageLoading && !loading && (
               <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-canvas/50 backdrop-blur-[1px] transition-opacity duration-150">
                 <div className="h-8 w-8 animate-spin rounded-full border-4 border-accent-soft border-t-accent" />
               </div>
@@ -169,7 +190,11 @@ export default function Card({
               <>
                 <Arrow side="left" onClick={prev} />
                 <Arrow side="right" onClick={next} />
-                <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center bg-gradient-to-t from-black/45 to-transparent pb-3 pt-8">
+              </>
+            )}
+            {(images.length > 1 || caption) && (
+              <div className="pointer-events-none absolute inset-x-0 bottom-0 flex flex-col items-center gap-2 bg-gradient-to-t from-black/75 via-black/45 to-transparent px-3 pb-3 pt-10">
+                {images.length > 1 && (
                   <div className="flex gap-1.5">
                     {images.map((_, n) => (
                       <span
@@ -180,12 +205,22 @@ export default function Card({
                       />
                     ))}
                   </div>
-                </div>
-              </>
+                )}
+                {caption && (
+                  <p className="line-clamp-2 w-full whitespace-pre-line text-center text-[11px] leading-snug text-white/90">
+                    {caption}
+                  </p>
+                )}
+              </div>
             )}
           </>
         ) : loading ? (
-          <div className="h-full w-full animate-pulse bg-line/40" />
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-line/30">
+            <div className="h-10 w-10 animate-spin rounded-full border-4 border-accent-soft border-t-accent" />
+            <span className="animate-pulse font-mono text-[11px] font-bold uppercase tracking-wide text-muted">
+              Loading…
+            </span>
+          </div>
         ) : (
           <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center">
             <span className="font-mono text-xs text-muted">
@@ -222,12 +257,7 @@ export default function Card({
           className="flex h-11 items-center justify-center gap-1.5 border-t-2 border-line text-xs font-bold uppercase tracking-wide text-ink transition-colors duration-150 hover:bg-accent hover:text-white"
         >
           View on Instagram
-          <span
-            aria-hidden
-            className="transition-transform duration-200 group-hover/card:translate-x-1"
-          >
-            →
-          </span>
+          <span aria-hidden>→</span>
         </a>
       ) : (
         <div className="flex h-11 items-center justify-center border-t-2 border-line text-xs font-bold uppercase tracking-wide text-muted">
@@ -240,6 +270,7 @@ export default function Card({
           images={images}
           index={idx}
           name={name}
+          caption={caption}
           postUrl={t?.postUrl ?? null}
           onPrev={prev}
           onNext={next}
@@ -311,6 +342,7 @@ function ForceDialog({
           Post link (optional)
         </label>
         <input
+          autoFocus
           type="url"
           value={link}
           onChange={(e) => setLink(e.target.value)}
@@ -322,7 +354,7 @@ function ForceDialog({
         </p>
 
         <label className="mb-1 block font-mono text-[10px] font-bold uppercase tracking-wide text-muted">
-          Number of posts (default 4)
+          Number of posts (default 12)
         </label>
         <input
           type="number"
@@ -330,7 +362,7 @@ function ForceDialog({
           max={50}
           value={count}
           onChange={(e) => setCount(e.target.value)}
-          placeholder="4"
+          placeholder="12"
           disabled={link.trim().length > 0}
           className="mb-5 w-full rounded-md border-2 border-line bg-canvas px-3 py-2 text-sm text-ink shadow-[2px_2px_0_0_var(--shadow)] placeholder:text-muted/60 focus:shadow-[3px_3px_0_0_var(--accent)] focus:outline-none disabled:opacity-40"
         />
@@ -382,6 +414,7 @@ function Lightbox({
   images,
   index,
   name,
+  caption,
   postUrl,
   onPrev,
   onNext,
@@ -390,6 +423,7 @@ function Lightbox({
   images: string[];
   index: number;
   name: string;
+  caption: string;
   postUrl: string | null;
   onPrev: () => void;
   onNext: () => void;
@@ -509,6 +543,16 @@ function Lightbox({
       {imgLoading && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/30 backdrop-blur-[2px] transition-opacity duration-150">
           <div className="h-12 w-12 animate-spin rounded-full border-4 border-white/20 border-t-white" />
+        </div>
+      )}
+      {caption && (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          className="absolute inset-x-0 bottom-0 max-h-[30%] overflow-y-auto bg-gradient-to-t from-black/90 to-transparent px-4 pb-5 pt-12"
+        >
+          <p className="mx-auto max-w-2xl whitespace-pre-line text-center text-sm leading-relaxed text-white/90">
+            {caption}
+          </p>
         </div>
       )}
     </div>,

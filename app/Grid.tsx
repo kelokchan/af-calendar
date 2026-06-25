@@ -305,7 +305,10 @@ export default function Grid({ items }: { items: Item[] }) {
       {/* Filter toolbar — search box + view toggle on top; Branch / Day / From
           dropdowns below. Search understands a mixed query like
           "yoga at river city at 7pm" (class + branch + time at once). */}
-      <div className="sticky top-14 z-10 mb-8 flex flex-col gap-2.5 bg-canvas py-3">
+      <div
+        data-toolbar
+        className="sticky top-14 z-10 mb-8 flex flex-col gap-2.5 bg-canvas py-3"
+      >
         <div className="flex flex-row items-center gap-2.5">
           <div className="relative min-w-0 flex-1">
             <input
@@ -452,11 +455,30 @@ function GlobalList({
     rows: rows.filter((r) => r.s.day === day),
   })).filter((g) => g.rows.length);
 
-  // Jump to today's classes when the list mounts (switching into list view) and
-  // once `now` resolves. scroll-mt on the section clears the sticky header.
-  const todayRef = useRef<HTMLElement>(null);
+  // Anchor = the latest class today that's already started (so opening the list
+  // lands on "where we are now", not the top of the day). Falls back to today's
+  // first class if nothing has started yet. rows are pre-sorted ascending.
+  const todayRows =
+    todayIdx >= 0 ? rows.filter((r) => r.s.day === DAYS[todayIdx]) : [];
+  const anchorPos =
+    now == null || !todayRows.length
+      ? (todayRows[0]?.pos ?? -1)
+      : (todayRows.filter((r) => r.pos <= now).at(-1)?.pos ?? todayRows[0].pos);
+
+  // Scroll the anchor into view on mount (switching into list view) and on day
+  // rollover — NOT every minute, so the keys deliberately exclude anchorPos/now.
+  const anchorRef = useRef<HTMLLIElement>(null);
   useEffect(() => {
-    todayRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    const el = anchorRef.current;
+    if (!el) return;
+    // Measure the live sticky stack (page header + filter toolbar) so the anchor
+    // clears them — heights differ on mobile (taller, wrapped) vs desktop.
+    const header = document.querySelector("header");
+    const toolbar = document.querySelector("[data-toolbar]");
+    const offset =
+      (header?.offsetHeight ?? 0) + (toolbar?.offsetHeight ?? 0) + 8;
+    const top = el.getBoundingClientRect().top + window.scrollY - offset;
+    window.scrollTo({ top, behavior: "auto" });
   }, [todayIdx]);
 
   if (!byDay.length) {
@@ -466,11 +488,7 @@ function GlobalList({
   return (
     <div className="flex flex-col gap-6">
       {byDay.map((g) => (
-        <section
-          key={g.day}
-          ref={g.idx === todayIdx ? todayRef : undefined}
-          className="scroll-mt-20"
-        >
+        <section key={g.day}>
           <h3 className="mb-1.5 flex items-center gap-2 text-sm font-semibold tracking-tight text-ink">
             {DAY_LABEL[g.day]}
             {g.idx === todayIdx && (
@@ -486,7 +504,14 @@ function GlobalList({
             {g.rows.map((r, n) => {
               const isNext = r.pos === nextPos;
               return (
-                <li key={`${r.handle}-${n}`}>
+                <li
+                  key={`${r.handle}-${n}`}
+                  ref={
+                    g.idx === todayIdx && r.pos === anchorPos
+                      ? anchorRef
+                      : undefined
+                  }
+                >
                   <a
                     href={r.post}
                     target="_blank"

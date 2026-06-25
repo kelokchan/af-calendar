@@ -2,7 +2,15 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { Timetable } from "@/lib/instagram";
+import { List, ImageIcon, RefreshCw } from "lucide-react";
+import {
+  to12h,
+  titleCase,
+  type Timetable,
+  type ClassSession,
+} from "@/lib/instagram";
+
+const DAY_ORDER = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
 
 // takenAt is unix seconds → "3 Jun 2026". null when no post / not scraped yet.
 const fmtDate = (s: number) =>
@@ -21,10 +29,16 @@ export default function Card({
   name,
   handle,
   t: initialT,
+  defaultList = false,
+  matchSession,
 }: {
   name: string;
   handle: string;
   t?: Timetable;
+  // A class filter is active → open straight to the list. matchSession highlights
+  // the rows that matched, so it's obvious why this gym is in the results.
+  defaultList?: boolean;
+  matchSession?: (s: ClassSession) => boolean;
 }) {
   // Cached server-side → render now. Otherwise fetch this one profile on mount,
   // so the grid fills card-by-card instead of blocking on a full batch scrape.
@@ -34,6 +48,15 @@ export default function Card({
   const [open, setOpen] = useState(false);
   const [forceOpen, setForceOpen] = useState(false);
   const [cardImageLoading, setCardImageLoading] = useState(true);
+  const [listView, setListView] = useState(defaultList);
+  // Re-sync with the global filter when it flips — React's "adjust state on prop
+  // change" pattern (during render, not an effect), so the per-card toggle stays
+  // free to override in between.
+  const [prevDefault, setPrevDefault] = useState(defaultList);
+  if (defaultList !== prevDefault) {
+    setPrevDefault(defaultList);
+    setListView(defaultList);
+  }
 
   // Force restart appends force=1 (+ optional link/limit) so the server bypasses
   // the week cache and re-scrapes. User-driven (force dialog, retry); the
@@ -78,7 +101,9 @@ export default function Card({
   }, [initialT, load]);
 
   const images = t?.images ?? [];
+  const schedule = t?.schedule ?? [];
   const caption = t?.caption?.trim() ?? "";
+  const showList = listView && schedule.length > 0;
   const idx = Math.min(i, Math.max(0, images.length - 1));
   const prev = () => {
     setCardImageLoading(true);
@@ -92,7 +117,7 @@ export default function Card({
   return (
     <div
       ref={ref}
-      className="nb-pop flex flex-col overflow-hidden rounded-lg bg-surface"
+      className="flex flex-col overflow-hidden rounded-2xl border border-line bg-surface transition-[border-color,box-shadow] duration-200 hover:border-accent hover:ring-1 hover:ring-accent"
     >
       <div className="flex h-[60px] items-center justify-between gap-2 px-4 py-3">
         <div className="min-w-0">
@@ -122,36 +147,54 @@ export default function Card({
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {loading ? (
-            <span className="animate-pulse rounded-md border-2 border-line bg-surface px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wide text-muted">
-              loading
+            <span className="animate-pulse rounded-full bg-surface-2 px-2.5 py-0.5 text-[11px] font-medium text-muted">
+              Loading
             </span>
           ) : t?.matchedMonth ? (
-            <span className="inline-flex items-center gap-1 rounded-md border-2 border-line bg-accent px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wide text-white">
-              <span className="h-1.5 w-1.5 rounded-full bg-white" />
-              timetable
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-accent-soft px-2.5 py-0.5 text-[11px] font-medium text-accent-ink">
+              <span className="h-1.5 w-1.5 rounded-full bg-accent" />
+              Timetable
             </span>
           ) : (
             images.length > 0 && (
-              <span className="rounded-md border-2 border-line bg-surface px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wide text-ink">
-                latest
+              <span className="rounded-full bg-surface-2 px-2.5 py-0.5 text-[11px] font-medium text-muted">
+                Latest
               </span>
             )
+          )}
+          {schedule.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setListView((v) => !v)}
+              title={showList ? "Show timetable image" : "Show class list"}
+              aria-label={showList ? "Show timetable image" : "Show class list"}
+              aria-pressed={showList}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-accent text-white transition-colors hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-accent/40"
+            >
+              {showList ? (
+                <ImageIcon className="h-4 w-4" />
+              ) : (
+                <List className="h-4 w-4" />
+              )}
+            </button>
           )}
           <button
             type="button"
             onClick={() => setForceOpen(true)}
             disabled={loading}
-            title="Force re-scrape (post link / count override)"
-            aria-label="Force restart"
-            className="inline-flex items-center gap-1 rounded-md border-2 border-line bg-surface px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wide text-muted shadow-[2px_2px_0_0_var(--shadow)] transition-all hover:bg-accent hover:text-white active:translate-x-[2px] active:translate-y-[2px] active:shadow-none disabled:cursor-not-allowed disabled:opacity-50"
+            title="Refresh — re-scrape (post link / count override)"
+            aria-label="Refresh"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-line bg-surface-2 text-ink transition-colors hover:border-ink/30 hover:bg-surface focus:outline-none focus:ring-2 focus:ring-accent/25 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            ⟳ Force
+            <RefreshCw className="h-4 w-4" />
           </button>
         </div>
       </div>
 
-      <div className="group relative aspect-[4/5] w-full overflow-hidden border-y-2 border-line bg-canvas">
-        {images.length ? (
+      <div className="group relative aspect-square w-full overflow-hidden border-y border-line bg-canvas">
+        {showList ? (
+          <ScheduleList sessions={schedule} matchSession={matchSession} />
+        ) : images.length ? (
           <>
             <button
               type="button"
@@ -176,7 +219,7 @@ export default function Card({
             {loading && (
               <div className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-canvas/75 backdrop-blur-[2px]">
                 <div className="h-12 w-12 animate-spin rounded-full border-4 border-accent-soft border-t-accent" />
-                <span className="animate-pulse rounded-md border-2 border-line bg-surface px-3 py-1 font-mono text-[11px] font-bold uppercase tracking-wide text-accent-ink shadow-[2px_2px_0_0_var(--shadow)]">
+                <span className="animate-pulse rounded-full bg-surface px-3 py-1 text-[11px] font-medium text-accent-ink shadow-sm">
                   Re-scraping…
                 </span>
               </div>
@@ -199,8 +242,8 @@ export default function Card({
                     {images.map((_, n) => (
                       <span
                         key={n}
-                        className={`h-2 border border-white/80 transition-all duration-200 ${
-                          n === idx ? "w-5 bg-accent" : "w-2 bg-white/60"
+                        className={`h-1.5 rounded-full transition-all duration-200 ${
+                          n === idx ? "w-5 bg-white" : "w-1.5 bg-white/50"
                         }`}
                       />
                     ))}
@@ -215,26 +258,22 @@ export default function Card({
             )}
           </>
         ) : loading ? (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-line/30">
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-surface-2">
             <div className="h-10 w-10 animate-spin rounded-full border-4 border-accent-soft border-t-accent" />
-            <span className="animate-pulse font-mono text-[11px] font-bold uppercase tracking-wide text-muted">
-              Loading…
-            </span>
+            <span className="animate-pulse text-xs text-muted">Loading…</span>
           </div>
         ) : (
           <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center">
-            <span className="font-mono text-xs text-muted">
+            <span className="text-sm text-muted">
               {t?.error ? "Couldn't load" : "No post found"}
             </span>
             {t?.error && (
-              <span className="font-mono text-[10px] text-muted/70">
-                {t.error}
-              </span>
+              <span className="text-xs text-muted/70">{t.error}</span>
             )}
             <button
               type="button"
               onClick={() => load()}
-              className="mt-1 rounded-md border-2 border-line bg-surface px-3 py-1 font-mono text-[10px] font-bold uppercase tracking-wide text-ink shadow-[2px_2px_0_0_var(--shadow)] transition-all hover:bg-accent hover:text-white active:translate-x-[2px] active:translate-y-[2px] active:shadow-none"
+              className="mt-1 rounded-lg bg-surface-2 px-3 py-1.5 text-xs font-medium text-ink transition-colors hover:bg-accent hover:text-white focus:outline-none focus:ring-2 focus:ring-accent/25"
             >
               Retry
             </button>
@@ -243,8 +282,8 @@ export default function Card({
       </div>
 
       {t?.takenAt && (
-        <div className="flex h-8 items-center gap-1.5 border-t-2 border-line px-4 font-mono text-[10px] uppercase tracking-wide text-muted">
-          <span className="font-bold">Posted</span>
+        <div className="flex h-9 items-center gap-1.5 border-t border-line px-4 text-xs text-muted">
+          <span className="font-medium text-ink">Posted</span>
           {fmtDate(t.takenAt)}
         </div>
       )}
@@ -254,13 +293,13 @@ export default function Card({
           href={t.postUrl}
           target="_blank"
           rel="noopener noreferrer"
-          className="flex h-11 items-center justify-center gap-1.5 border-t-2 border-line text-xs font-bold uppercase tracking-wide text-ink transition-colors duration-150 hover:bg-accent hover:text-white"
+          className="flex h-11 items-center justify-center gap-1.5 border-t border-line text-sm font-medium text-accent-ink transition-colors duration-150 hover:bg-accent-soft"
         >
           View on Instagram
           <span aria-hidden>→</span>
         </a>
       ) : (
-        <div className="flex h-11 items-center justify-center border-t-2 border-line text-xs font-bold uppercase tracking-wide text-muted">
+        <div className="flex h-11 items-center justify-center border-t border-line text-sm font-medium text-muted">
           {loading ? "Loading…" : "No post"}
         </div>
       )}
@@ -288,6 +327,59 @@ export default function Card({
           }}
         />
       )}
+    </div>
+  );
+}
+
+// Vision-parsed schedule, grouped Mon→Sun and sorted by start time. Rows that
+// match the active class filter are highlighted so the gym's relevance is obvious.
+function ScheduleList({
+  sessions,
+  matchSession,
+}: {
+  sessions: ClassSession[];
+  matchSession?: (s: ClassSession) => boolean;
+}) {
+  const byDay = DAY_ORDER.map((day) => ({
+    day,
+    rows: sessions
+      .filter((s) => s.day === day)
+      .sort((a, b) => a.startTime.localeCompare(b.startTime)),
+  })).filter((g) => g.rows.length);
+
+  return (
+    <div className="absolute inset-0 overflow-y-auto bg-canvas px-3 py-3">
+      {byDay.map((g) => (
+        <div key={g.day} className="mb-3 last:mb-0">
+          <div className="sticky top-0 mb-1 bg-canvas pb-1 text-[11px] font-semibold uppercase tracking-wide text-muted">
+            {g.day}
+          </div>
+          <ul className="flex flex-col gap-0.5">
+            {g.rows.map((s, n) => (
+              <li
+                key={n}
+                className={`flex items-baseline gap-2 rounded-lg px-2 py-1 ${
+                  matchSession?.(s)
+                    ? "bg-accent-soft text-accent-ink"
+                    : "bg-surface-2"
+                }`}
+              >
+                <span className="w-14 shrink-0 font-mono text-[11px] font-semibold tabular-nums text-ink">
+                  {to12h(s.startTime)}
+                </span>
+                <span className="min-w-0 flex-1 truncate text-[12px] text-ink">
+                  {titleCase(s.className)}
+                  {s.instructor && (
+                    <span className="ml-1 text-muted">
+                      · {titleCase(s.instructor)}
+                    </span>
+                  )}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
     </div>
   );
 }
@@ -329,16 +421,16 @@ function ForceDialog({
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-sm rounded-lg border-2 border-line bg-surface p-5 shadow-[6px_6px_0_0_var(--shadow)]"
+        className="w-full max-w-sm rounded-2xl border border-line bg-surface p-5 shadow-xl"
       >
         <h3 className="mb-1 text-sm font-semibold tracking-tight text-ink">
           Force restart
         </h3>
-        <p className="mb-4 font-mono text-[11px] text-muted">
+        <p className="mb-4 text-xs text-muted">
           @{handle} — re-scrapes, bypassing this month&apos;s cache.
         </p>
 
-        <label className="mb-1 block font-mono text-[10px] font-bold uppercase tracking-wide text-muted">
+        <label className="mb-1 block text-xs font-medium text-muted">
           Post link (optional)
         </label>
         <input
@@ -347,13 +439,13 @@ function ForceDialog({
           value={link}
           onChange={(e) => setLink(e.target.value)}
           placeholder="https://instagram.com/p/…"
-          className="mb-1 w-full rounded-md border-2 border-line bg-canvas px-3 py-2 text-sm text-ink shadow-[2px_2px_0_0_var(--shadow)] placeholder:text-muted/60 focus:shadow-[3px_3px_0_0_var(--accent)] focus:outline-none"
+          className="mb-1 w-full rounded-lg border border-line bg-canvas px-3 py-2 text-sm text-ink placeholder:text-muted/60 transition-colors focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/25"
         />
-        <p className="mb-4 font-mono text-[10px] text-muted/70">
+        <p className="mb-4 text-xs text-muted/70">
           Takes precedence over count — fetches that exact post.
         </p>
 
-        <label className="mb-1 block font-mono text-[10px] font-bold uppercase tracking-wide text-muted">
+        <label className="mb-1 block text-xs font-medium text-muted">
           Number of posts (default 12)
         </label>
         <input
@@ -364,21 +456,21 @@ function ForceDialog({
           onChange={(e) => setCount(e.target.value)}
           placeholder="12"
           disabled={link.trim().length > 0}
-          className="mb-5 w-full rounded-md border-2 border-line bg-canvas px-3 py-2 text-sm text-ink shadow-[2px_2px_0_0_var(--shadow)] placeholder:text-muted/60 focus:shadow-[3px_3px_0_0_var(--accent)] focus:outline-none disabled:opacity-40"
+          className="mb-5 w-full rounded-lg border border-line bg-canvas px-3 py-2 text-sm text-ink placeholder:text-muted/60 transition-colors focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/25 disabled:opacity-40"
         />
 
         <div className="flex justify-end gap-2">
           <button
             type="button"
             onClick={onClose}
-            className="rounded-md border-2 border-line bg-surface px-3 py-1.5 font-mono text-[11px] font-bold uppercase tracking-wide text-ink shadow-[2px_2px_0_0_var(--shadow)] transition-all hover:bg-canvas active:translate-x-[2px] active:translate-y-[2px] active:shadow-none"
+            className="rounded-lg px-3 py-1.5 text-sm font-medium text-muted transition-colors hover:bg-surface-2 hover:text-ink focus:outline-none focus:ring-2 focus:ring-accent/25"
           >
             Cancel
           </button>
           <button
             type="button"
             onClick={submit}
-            className="rounded-md border-2 border-line bg-accent px-3 py-1.5 font-mono text-[11px] font-bold uppercase tracking-wide text-white shadow-[2px_2px_0_0_var(--shadow)] transition-all hover:opacity-90 active:translate-x-[2px] active:translate-y-[2px] active:shadow-none"
+            className="rounded-lg bg-accent px-3.5 py-1.5 text-sm font-medium text-white transition-opacity hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-accent/40"
           >
             Run
           </button>
@@ -403,7 +495,7 @@ function Arrow({
       aria-label={side === "left" ? "Previous" : "Next"}
       className={`absolute top-1/2 -mt-[18px] ${
         side === "left" ? "left-2" : "right-2"
-      } flex h-9 w-9 items-center justify-center rounded-md border-2 border-line bg-surface pb-0.5 text-xl leading-none text-ink opacity-0 shadow-[3px_3px_0_0_var(--shadow)] transition-all duration-150 hover:bg-accent hover:text-white focus-visible:opacity-100 active:translate-x-[3px] active:translate-y-[3px] active:shadow-none group-hover:opacity-100`}
+      } flex h-9 w-9 items-center justify-center rounded-full bg-surface/90 pb-0.5 text-xl leading-none text-ink opacity-0 shadow-sm backdrop-blur transition-all duration-150 hover:bg-surface focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 group-hover:opacity-100`}
     >
       {side === "left" ? "‹" : "›"}
     </button>
@@ -487,7 +579,7 @@ function Lightbox({
             target="_blank"
             rel="noopener noreferrer"
             onClick={(e) => e.stopPropagation()}
-            className="rounded-md border-2 border-white bg-white/10 px-3 py-1 text-xs font-bold uppercase tracking-wide shadow-[2px_2px_0_0_rgba(255,255,255,0.7)] transition-colors hover:bg-accent"
+            className="rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-white backdrop-blur transition-colors hover:bg-white/20"
           >
             View post ↗
           </a>
@@ -497,7 +589,7 @@ function Lightbox({
         type="button"
         onClick={onClose}
         aria-label="Close"
-        className="absolute right-4 top-4 flex h-10 w-10 items-center justify-center rounded-md border-2 border-white bg-white/10 pb-1 text-2xl leading-none text-white shadow-[3px_3px_0_0_rgba(255,255,255,0.7)] transition-all hover:bg-accent active:translate-x-[3px] active:translate-y-[3px] active:shadow-none"
+        className="absolute right-4 top-4 flex h-10 w-10 items-center justify-center rounded-full bg-white/10 pb-1 text-2xl leading-none text-white backdrop-blur transition-colors hover:bg-white/20"
       >
         ×
       </button>
@@ -510,7 +602,7 @@ function Lightbox({
               handlePrev();
             }}
             aria-label="Previous"
-            className="absolute left-2 top-1/2 -mt-7 flex h-14 w-14 items-center justify-center rounded-md border-2 border-white bg-white/10 pb-1 text-4xl text-white shadow-[4px_4px_0_0_rgba(255,255,255,0.7)] transition-all hover:bg-accent active:translate-x-[3px] active:translate-y-[3px] active:shadow-none sm:left-6"
+            className="absolute left-2 top-1/2 -mt-7 flex h-14 w-14 items-center justify-center rounded-full bg-white/10 pb-1 text-4xl text-white backdrop-blur transition-colors hover:bg-white/20 sm:left-6"
           >
             ‹
           </button>
@@ -521,7 +613,7 @@ function Lightbox({
               handleNext();
             }}
             aria-label="Next"
-            className="absolute right-2 top-1/2 -mt-7 flex h-14 w-14 items-center justify-center rounded-md border-2 border-white bg-white/10 pb-1 text-4xl text-white shadow-[4px_4px_0_0_rgba(255,255,255,0.7)] transition-all hover:bg-accent active:translate-x-[3px] active:translate-y-[3px] active:shadow-none sm:right-6"
+            className="absolute right-2 top-1/2 -mt-7 flex h-14 w-14 items-center justify-center rounded-full bg-white/10 pb-1 text-4xl text-white backdrop-blur transition-colors hover:bg-white/20 sm:right-6"
           >
             ›
           </button>
@@ -538,7 +630,7 @@ function Lightbox({
         onLoad={() => setImgLoading(false)}
         onError={() => setImgLoading(false)}
         onClick={(e) => e.stopPropagation()}
-        className="max-h-full max-w-full rounded-lg border-2 border-white object-contain shadow-[8px_8px_0_0_rgba(255,255,255,0.5)]"
+        className="max-h-full max-w-full rounded-lg object-contain shadow-2xl"
       />
       {imgLoading && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/30 backdrop-blur-[2px] transition-opacity duration-150">

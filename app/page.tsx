@@ -1,6 +1,7 @@
 import { LOCATIONS, KEPONG } from "@/lib/locations";
 import { getCached } from "@/lib/instagram";
 import Grid from "./Grid";
+import ScrollTop from "./ScrollTop";
 
 // Nearest to Kepong first. Squared-degree distance is fine for ranking.
 const SORTED = [...LOCATIONS].sort(
@@ -30,26 +31,18 @@ export default async function Home() {
 
   return (
     <main className="min-h-screen">
-      <header className="sticky top-0 z-20 border-b-2 border-line bg-canvas">
+      <header className="sticky top-0 z-20 border-b border-line bg-canvas/85 backdrop-blur">
         <div className="mx-auto flex w-full max-w-[120rem] flex-wrap items-center justify-between gap-x-6 gap-y-2 px-4 py-3 sm:px-6">
           <div className="flex items-center gap-3">
-            <span
-              aria-hidden
-              className="flex h-10 w-10 items-center justify-center rounded-md border-2 border-line bg-accent font-mono text-sm font-bold tracking-tighter text-white shadow-[3px_3px_0_0_var(--shadow)]"
-            >
-              AF
-            </span>
-            <div>
-              <h1 className="text-base font-semibold leading-tight tracking-tight text-ink sm:text-lg">
-                Class Timetables
-              </h1>
-              <p className="font-mono text-[11px] uppercase tracking-wider text-muted">
-                Anytime Fitness
-              </p>
-            </div>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/af-logo.webp"
+              alt="Anytime Fitness"
+              className="h-8 w-auto"
+            />
           </div>
 
-          <span className="inline-flex items-center gap-1.5 rounded-md border-2 border-line bg-surface px-3 py-1.5 font-mono text-xs font-bold uppercase tracking-wide text-ink">
+          <span className="rounded-full bg-surface-2 px-3 py-1 text-xs font-medium text-muted">
             {MONTH}
           </span>
         </div>
@@ -66,6 +59,8 @@ export default async function Home() {
           }))}
         />
       </div>
+
+      <ScrollTop />
     </main>
   );
 }

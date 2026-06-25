@@ -1,43 +1,40 @@
 @import "tailwindcss";
 
-/* Anytime Fitness — violet identity, NEOBRUTALIST language. Flat surfaces,
-   near-black borders, hard offset shadows (no blur), one loud accent.
-   Cool-tinted neutrals (chroma toward the brand hue ~305). OKLCH throughout. */
+/* Anytime Fitness — violet identity, FLAT language. No card chrome: surfaces sit
+   on the page, hierarchy comes from type weight + whitespace + hairline rules.
+   Violet is reserved for state (focus, active, the timetable marker), not
+   decoration. Cool-tinted neutrals (chroma toward the brand hue ~305). OKLCH. */
 :root {
-  --canvas: oklch(
-    0.95 0.022 305
-  ); /* calm violet wash — surfaces sit quietly on it */
-  --surface: oklch(1 0 0); /* pure white cards */
-  --line: oklch(0.22 0.028 305); /* near-black border (the brutalist outline) */
-  --line-strong: oklch(0.16 0.03 305);
-  --ink: oklch(0.18 0.03 305); /* near-black text */
-  --muted: oklch(0.4 0.03 305); /* ≥4.5:1 on white */
-  --accent: oklch(0.55 0.205 305); /* AF violet — confident, not neon */
-  --accent-ink: oklch(0.42 0.18 305); /* text-on-light variant */
-  --accent-soft: oklch(0.9 0.05 305);
-  --shadow: oklch(0.16 0.03 305); /* hard-shadow color (near-black) */
+  --canvas: oklch(0.985 0.004 305); /* page — near-white, faint violet warmth */
+  --surface: oklch(1 0 0); /* fields, image area, soft pills */
+  --surface-2: oklch(0.965 0.006 305); /* subtle fill — neutral chips, hover */
+  --line: oklch(0.91 0.008 305); /* hairline rule / field border */
+  --ink: oklch(0.24 0.022 305); /* primary text */
+  --muted: oklch(0.5 0.022 305); /* secondary text — ≥4.5:1 on canvas */
+  --accent: oklch(0.55 0.205 305); /* AF violet */
+  --accent-ink: oklch(0.45 0.17 305); /* violet text on light — ≥4.5:1 */
+  --accent-soft: oklch(0.95 0.035 305); /* violet tint — chips, hover */
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --canvas: oklch(0.19 0.02 305);
-    --surface: oklch(0.25 0.022 305);
-    --line: oklch(0.97 0.008 305); /* light outline on dark */
-    --line-strong: oklch(1 0 0);
-    --ink: oklch(0.97 0.006 305);
-    --muted: oklch(0.74 0.018 305);
-    --accent: oklch(0.68 0.16 305);
-    --accent-ink: oklch(0.82 0.14 305);
-    --accent-soft: oklch(0.34 0.06 305);
-    --shadow: oklch(0.98 0.008 305); /* light hard shadow on dark */
+    --canvas: oklch(0.18 0.012 305);
+    --surface: oklch(0.225 0.015 305);
+    --surface-2: oklch(0.27 0.016 305);
+    --line: oklch(0.32 0.014 305);
+    --ink: oklch(0.96 0.006 305);
+    --muted: oklch(0.72 0.016 305);
+    --accent: oklch(0.72 0.15 305);
+    --accent-ink: oklch(0.82 0.13 305);
+    --accent-soft: oklch(0.3 0.05 305);
   }
 }
 
 @theme inline {
   --color-canvas: var(--canvas);
   --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
   --color-line: var(--line);
-  --color-line-strong: var(--line-strong);
   --color-ink: var(--ink);
   --color-muted: var(--muted);
   --color-accent: var(--accent);
@@ -51,40 +48,6 @@ body {
   background: var(--canvas);
   color: var(--ink);
   font-family: var(--font-geist-sans), system-ui, sans-serif;
-}
-
-/* ---- Neobrutalist primitives -------------------------------------------------
-   nb-pop  : container — thick outline + hard offset shadow, lifts on hover.
-   nb-btn  : pressable — smaller shadow that collapses on :active (push-in).   */
-.nb-pop {
-  border: 2px solid var(--line);
-  box-shadow: 4px 4px 0 0 var(--shadow);
-  transition:
-    box-shadow 0.15s cubic-bezier(0.22, 1, 0.36, 1),
-    transform 0.15s cubic-bezier(0.22, 1, 0.36, 1);
-}
-@media (hover: hover) {
-  .nb-pop:hover {
-    box-shadow: 5px 5px 0 0 var(--shadow);
-    transform: translate(-1px, -1px);
-  }
-}
-.nb-btn {
-  border: 2px solid var(--line);
-  box-shadow: 3px 3px 0 0 var(--shadow);
-  transition:
-    box-shadow 0.1s ease-out,
-    transform 0.1s ease-out;
-}
-@media (hover: hover) {
-  .nb-btn:hover {
-    box-shadow: 4px 4px 0 0 var(--shadow);
-    transform: translate(-1px, -1px);
-  }
-}
-.nb-btn:active {
-  box-shadow: 0 0 0 0 var(--shadow);
-  transform: translate(3px, 3px);
 }
 
 @media (prefers-reduced-motion: reduce) {

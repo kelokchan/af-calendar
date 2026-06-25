@@ -6,6 +6,17 @@
 
 import { Redis } from "@upstash/redis";
 import { put } from "@vercel/blob";
+import { generateText, Output } from "ai";
+import { z } from "zod";
+
+// One parsed class slot from a timetable image. day/startTime are normalized so
+// the cross-gym filter can compare them; instructor is display-only and optional.
+export type ClassSession = {
+  day: "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat" | "Sun";
+  startTime: string; // 24-hour, zero-padded "HH:MM"
+  className: string;
+  instructor?: string;
+};
 
 export type Timetable = {
   handle: string;
@@ -14,6 +25,7 @@ export type Timetable = {
   postUrl: string | null;
   takenAt: number | null;
   matchedMonth: boolean; // caption mentions current month / timetable keyword
+  schedule?: ClassSession[]; // vision-extracted classes; absent if none parsed
   error?: string;
 };
 
@@ -22,6 +34,17 @@ export type Timetable = {
 // so rewriting to the global CDN host makes the same image fetchable everywhere.
 export const cdnUrl = (u: string) =>
   u.replace(/^https:\/\/[^/]+/, "https://scontent.cdninstagram.com");
+
+// "HH:MM" (24h) → "h:MMam/pm". Minutes always shown ("7:00am").
+export const to12h = (t: string) => {
+  const h = +t.slice(0, 2);
+  const m = t.slice(3, 5);
+  return `${((h + 11) % 12) + 1}:${m}${h < 12 ? "am" : "pm"}`;
+};
+
+// OCR yields ALL-CAPS class/instructor text. Title-case for display.
+export const titleCase = (s: string) =>
+  s.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
 
 // Normalized post, source-agnostic.
 type Post = {
@@ -113,17 +136,19 @@ function toPost(it: ApifyItem): Post {
 // the age cap so the count is the only limit and old pinned posts stay reachable.
 type ScrapeOpts = { postUrl?: string; limit?: number };
 
-async function fetchViaApify(
-  handles: string[],
+// One profile (or one post link) → its posts, newest first. Single-handle, so
+// every returned item belongs to this handle; no username grouping needed.
+async function scrapePosts(
+  handle: string,
   opts: ScrapeOpts = {},
-): Promise<Timetable[]> {
+): Promise<Post[]> {
   const token = process.env.APIFY_TOKEN!;
   const body: Record<string, unknown> = {
     directUrls: opts.postUrl
       ? [opts.postUrl]
-      : handles.map((h) => `https://www.instagram.com/${h}/`),
+      : [`https://www.instagram.com/${handle}/`],
     resultsType: "posts",
-    resultsLimit: opts.limit ?? 12, // per profile; deeper window so a buried monthly schedule (sunk below newer promos) stays reachable. Age cap below bounds the cost.
+    resultsLimit: opts.limit ?? 12, // deeper window so a buried monthly schedule (sunk below newer promos) stays reachable. Age cap below bounds the cost.
     addParentData: false,
   };
   // Default profile scrape only → cap by age to cut billed results. A forced
@@ -142,19 +167,215 @@ async function fetchViaApify(
   );
   if (!res.ok) throw new Error(`Apify HTTP ${res.status}`);
   const items: ApifyItem[] = await res.json();
+  return items.map(toPost);
+}
 
-  // Direct post link is always one handle → take the returned post(s) as-is,
-  // skipping the username grouping (owner may differ in case from the handle).
-  if (opts.postUrl) return [choose(handles[0], items.map(toPost))];
+// ---- Vision: identify the timetable post + extract its schedule -------------
+// The dominant miss is an image-only, plain-caption, unpinned timetable that a
+// newer promo outranks — invisible to caption/pin heuristics, legible only in
+// the image. A cheap vision model looks at the top candidates, says which one
+// (if any) IS the weekly class timetable, and extracts its sessions in the same
+// call (powering the list view + cross-gym filter). Cache-miss path only, so
+// it runs ~once per gym per week.
 
-  // Group posts by username, preserving Apify's order (newest first).
-  const byUser = new Map<string, Post[]>();
-  for (const it of items) {
-    const u = it.ownerUsername;
-    if (!u) continue;
-    (byUser.get(u) ?? byUser.set(u, []).get(u)!).push(toPost(it));
+const N_CANDIDATES = 5; // top recent posts shown to the model; the miss-case timetable is recent, just outranked
+
+// Chosen by eval (3 real timetables + 1 meme post). 2.5-flash matches the gold
+// model (gemini-3-pro) pixel-for-pixel on real grids AND correctly returns 0 on
+// non-timetable images; cheaper flash-lite/nova-lite HALLUCINATE classes from
+// memes/promos — fabricating a schedule, the one failure we can't ship.
+const VISION_MODEL = "google/gemini-2.5-flash";
+
+// Step 1 — classify: which candidate cover image is the weekly timetable? -1 = none.
+const ClassifyResult = z.object({ timetableIndex: z.number().int() });
+
+// Step 2 — extract: read sessions from the chosen post's image(s). day is a free
+// string (NOT z.enum) — the model transcribes the image's own labels ("THURSDAY",
+// "FIRDAY"), which an enum would reject, discarding the whole timetable. Normalized
+// to DAYS in normalizeSessions below.
+const ExtractResult = z.object({
+  sessions: z.array(
+    z.object({
+      day: z.string(),
+      startTime: z.string(),
+      className: z.string(),
+      instructor: z.string().optional(),
+    }),
+  ),
+});
+
+// Map a raw model day label → canonical Mon–Sun, tolerant of case, full names,
+// and the typos gyms actually print. null → drop that row (not the whole table).
+const DAY_ALIASES: Record<string, ClassSession["day"]> = {
+  mon: "Mon",
+  monday: "Mon",
+  tue: "Tue",
+  tues: "Tue",
+  tuesday: "Tue",
+  wed: "Wed",
+  weds: "Wed",
+  wednesday: "Wed",
+  thu: "Thu",
+  thur: "Thu",
+  thurs: "Thu",
+  thursday: "Thu",
+  fri: "Fri",
+  friday: "Fri",
+  firday: "Fri",
+  frday: "Fri",
+  sat: "Sat",
+  saturday: "Sat",
+  sun: "Sun",
+  sunday: "Sun",
+};
+function normalizeDay(raw: string): ClassSession["day"] | null {
+  const k = raw.toLowerCase().replace(/[^a-z]/g, "");
+  return DAY_ALIASES[k] ?? DAY_ALIASES[k.slice(0, 3)] ?? null;
+}
+
+// Normalize + validate the model's rows: canonical day, "HH:MM" time, non-empty
+// class. Drops only the rows that fail, keeping the rest of the timetable.
+function normalizeSessions(
+  raw: {
+    day: string;
+    startTime: string;
+    className: string;
+    instructor?: string;
+  }[],
+): ClassSession[] {
+  const out: ClassSession[] = [];
+  for (const s of raw) {
+    const day = normalizeDay(s.day ?? "");
+    const startTime = (s.startTime ?? "").trim();
+    const className = (s.className ?? "").trim();
+    if (!day || !/^\d{1,2}:\d{2}$/.test(startTime) || !className) continue;
+    // zero-pad "7:30" → "07:30" so string compare in the time filter is correct.
+    out.push({
+      day,
+      startTime: startTime.padStart(5, "0"),
+      className,
+      instructor: s.instructor?.trim() || undefined,
+    });
   }
-  return handles.map((h) => choose(h, byUser.get(h) ?? []));
+  return out;
+}
+
+// On Vercel the gateway authenticates via OIDC; locally it needs a key. Both
+// absent → skip vision (fast, no failing call) and fall back to the heuristic.
+const visionEnabled = !!(process.env.AI_GATEWAY_API_KEY || process.env.VERCEL);
+
+const CLASSIFY_PROMPT =
+  "These are recent Instagram posts from an Anytime Fitness gym, labeled Image 0, Image 1, and so on. " +
+  "At most one is the gym's WEEKLY GROUP-CLASS TIMETABLE: a grid or list of class names with days and times. " +
+  "Promos, memes, events, holidays, birthdays, member spotlights and equipment posts are NOT timetables. " +
+  "Return timetableIndex = the label number of the timetable image, or -1 if none qualifies.";
+
+const EXTRACT_PROMPT =
+  "The following image(s) are one gym's weekly class timetable (it may span multiple carousel pages). " +
+  "Extract EVERY class session you can read: day (Mon–Sun), startTime as zero-padded 24-hour HH:MM " +
+  "(e.g. 07:00, 19:30), className, and instructor if shown. List a class under each day it runs. " +
+  "Do not invent rows. If an image is NOT actually a class timetable, return no sessions.";
+
+// Fetch image bytes ourselves (IG blocks server hotlinks without these headers)
+// and hand the model a self-describing data URL.
+async function fetchImageData(u: string): Promise<string | null> {
+  try {
+    const res = await fetch(u, {
+      headers: {
+        "user-agent": "Mozilla/5.0",
+        referer: "https://www.instagram.com/",
+      },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) return null;
+    const ct = res.headers.get("content-type") ?? "image/jpeg";
+    const b64 = Buffer.from(await res.arrayBuffer()).toString("base64");
+    return `data:${ct};base64,${b64}`;
+  } catch {
+    return null;
+  }
+}
+
+type Part = { type: "text"; text: string } | { type: "image"; image: string };
+
+// Step 1: which candidate post is the timetable? Returns an index into `posts`,
+// or -1 (no timetable / vision disabled / failure) so the caption-pin heuristic
+// stands. Cheap — one cover image per candidate.
+async function classifyTimetable(posts: Post[]): Promise<number> {
+  if (!visionEnabled) {
+    console.warn(
+      "[vision] disabled — no AI_GATEWAY_API_KEY (and not on Vercel); using heuristic",
+    );
+    return -1;
+  }
+  const candidates = posts.slice(0, N_CANDIDATES);
+  const datas = await Promise.all(
+    candidates.map((p) => (p.images[0] ? fetchImageData(p.images[0]) : null)),
+  );
+  const content: Part[] = [{ type: "text", text: CLASSIFY_PROMPT }];
+  // Keep labels = candidate index even when one fails to fetch, so the model's
+  // timetableIndex maps straight back to posts[index].
+  datas.forEach((d, i) => {
+    if (d) {
+      content.push({ type: "text", text: `Image ${i}:` });
+      content.push({ type: "image", image: d });
+    }
+  });
+  if (content.length === 1) {
+    console.warn("[vision] no candidate images fetchable — using heuristic");
+    return -1;
+  }
+  try {
+    const { output } = await generateText({
+      model: VISION_MODEL,
+      output: Output.object({ schema: ClassifyResult }),
+      messages: [{ role: "user", content }],
+    });
+    console.log(`[vision] classify → index ${output.timetableIndex}`);
+    return output.timetableIndex;
+  } catch (e) {
+    console.error(
+      "[vision] classify failed:",
+      e instanceof Error ? e.message : e,
+    );
+    return -1;
+  }
+}
+
+// Step 2: read all sessions from a timetable post's image(s) — sends every
+// carousel page, so a grid split across pages is fully captured. Extracting on
+// just the chosen image (vs one combined call over five candidates) is markedly
+// more complete. Empty on disabled / unfetchable / failure / not-a-timetable.
+export async function extractSchedule(
+  images: string[],
+): Promise<ClassSession[]> {
+  if (!visionEnabled || !images.length) return [];
+  const datas = (
+    await Promise.all(images.slice(0, 4).map((u) => fetchImageData(u)))
+  ).filter((d): d is string => !!d);
+  if (!datas.length) return [];
+  const content: Part[] = [
+    { type: "text", text: EXTRACT_PROMPT },
+    ...datas.map((d): Part => ({ type: "image", image: d })),
+  ];
+  try {
+    const { output } = await generateText({
+      model: VISION_MODEL,
+      output: Output.object({ schema: ExtractResult }),
+      messages: [{ role: "user", content }],
+    });
+    const sessions = normalizeSessions(output.sessions);
+    console.log(
+      `[vision] extract → ${output.sessions.length} raw → ${sessions.length} sessions`,
+    );
+    return sessions;
+  } catch (e) {
+    console.error(
+      "[vision] extract failed:",
+      e instanceof Error ? e.message : e,
+    );
+    return [];
+  }
 }
 
 // ---- Redis cache ------------------------------------------------------------
@@ -333,10 +554,43 @@ export async function fetchTimetable(
     if (cached[handle]) return cached[handle];
   }
   try {
-    const [t] = await fetchViaApify([handle], {
+    const posts = await scrapePosts(handle, {
       postUrl: opts.postUrl,
       limit: opts.limit,
     });
+    let t = choose(handle, posts);
+    if (opts.postUrl) {
+      // User pasted the exact post → it IS the timetable. Skip classify, just
+      // extract its schedule (this is what lights up the List view + filter).
+      if (posts[0]) {
+        const schedule = await extractSchedule(posts[0].images);
+        if (schedule.length) t = { ...t, matchedMonth: true, schedule };
+      }
+    } else if (posts.length) {
+      // Classify which post is the timetable, then extract on ONLY that image —
+      // far more complete than one combined call juggling five candidates, and it
+      // catches the image-only/unpinned miss the caption/pin heuristic can't see.
+      const idx = await classifyTimetable(posts);
+      if (idx >= 0 && posts[idx]) {
+        const p = posts[idx];
+        const schedule = await extractSchedule(p.images);
+        // Only let vision override the heuristic when it actually extracted a
+        // schedule. A classify hit with zero sessions is usually a misread promo
+        // (e.g. a meme that name-drops classes) — don't badge it as a timetable;
+        // let the caption/pin heuristic or the carried-forward prior stand.
+        if (schedule.length) {
+          t = {
+            handle,
+            images: p.images,
+            caption: p.caption,
+            postUrl: p.url,
+            takenAt: p.takenAt,
+            matchedMonth: true,
+            schedule,
+          };
+        }
+      }
+    }
     // Non-match scrape (error, or just the newest unrelated post) shouldn't
     // overwrite a confident schedule we already have — keep the prior instead,
     // re-anchored into this week's key so it survives the rollover. An explicit

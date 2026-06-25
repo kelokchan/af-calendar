@@ -71,12 +71,6 @@ export const LOCATIONS: Location[] = [
   },
   { handle: "af.ss2.petalingjaya", name: "SS2 PJ", lat: 3.117, lng: 101.624 },
   {
-    handle: "anytimefitness.setapak",
-    name: "Setapak Central",
-    lat: 3.203,
-    lng: 101.716,
-  },
-  {
     handle: "anytimefitness.jalanampang",
     name: "Jalan Ampang (Great Eastern Mall)",
     lat: 3.161,
@@ -205,12 +199,6 @@ export const LOCATIONS: Location[] = [
     name: "Tropicana Metropark, Subang",
     lat: 3.045,
     lng: 101.585,
-  },
-  {
-    handle: "anytimefitness.psa",
-    name: "Plaza Shah Alam",
-    lat: 3.073,
-    lng: 101.518,
   },
   {
     handle: "anytimefitness.bukitjelutong",

@@ -89,20 +89,50 @@ type ApifyItem = {
   isPinned?: boolean;
 };
 
-async function fetchViaApify(handles: string[]): Promise<Timetable[]> {
+function toPost(it: ApifyItem): Post {
+  const images = it.childPosts?.length
+    ? (it.childPosts.map((c) => c.displayUrl).filter(Boolean) as string[])
+    : it.images?.length
+      ? it.images
+      : it.displayUrl
+        ? [it.displayUrl]
+        : [];
+  return {
+    caption: it.caption ?? "",
+    images: images.map(cdnUrl),
+    url: it.url ?? null,
+    takenAt: it.timestamp ? Math.floor(Date.parse(it.timestamp) / 1000) : null,
+    pinned: !!it.isPinned,
+  };
+}
+
+// opts (force restart): postUrl scrapes that exact post (overrides the profile
+// scrape, takes precedence); limit overrides the default depth. Either one drops
+// the age cap so the count is the only limit and old pinned posts stay reachable.
+type ScrapeOpts = { postUrl?: string; limit?: number };
+
+async function fetchViaApify(
+  handles: string[],
+  opts: ScrapeOpts = {},
+): Promise<Timetable[]> {
   const token = process.env.APIFY_TOKEN!;
+  const body: Record<string, unknown> = {
+    directUrls: opts.postUrl
+      ? [opts.postUrl]
+      : handles.map((h) => `https://www.instagram.com/${h}/`),
+    resultsType: "posts",
+    resultsLimit: opts.limit ?? 4, // per profile; the fresh weekly timetable sits at top
+    addParentData: false,
+  };
+  // Default profile scrape only → cap by age to cut billed results. A forced
+  // post-link or custom count means "fetch what I asked", so don't age-filter.
+  if (!opts.postUrl && opts.limit == null) body.onlyPostsNewerThan = "2 months"; // stop early on active gyms — fewer billed results
   const res = await fetch(
     `https://api.apify.com/v2/acts/apify~instagram-scraper/run-sync-get-dataset-items?token=${token}`,
     {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        directUrls: handles.map((h) => `https://www.instagram.com/${h}/`),
-        resultsType: "posts",
-        resultsLimit: 4, // per profile; the fresh weekly timetable sits at top
-        onlyPostsNewerThan: "2 months", // stop early on active gyms — fewer billed results
-        addParentData: false,
-      }),
+      body: JSON.stringify(body),
       // ponytail: cap the sync scrape so a stuck Apify run can't hang the request
       // forever. Called per-profile, so this is one profile's budget.
       signal: AbortSignal.timeout(120_000),
@@ -111,28 +141,16 @@ async function fetchViaApify(handles: string[]): Promise<Timetable[]> {
   if (!res.ok) throw new Error(`Apify HTTP ${res.status}`);
   const items: ApifyItem[] = await res.json();
 
+  // Direct post link is always one handle → take the returned post(s) as-is,
+  // skipping the username grouping (owner may differ in case from the handle).
+  if (opts.postUrl) return [choose(handles[0], items.map(toPost))];
+
   // Group posts by username, preserving Apify's order (newest first).
   const byUser = new Map<string, Post[]>();
   for (const it of items) {
     const u = it.ownerUsername;
     if (!u) continue;
-    const images = it.childPosts?.length
-      ? (it.childPosts.map((c) => c.displayUrl).filter(Boolean) as string[])
-      : it.images?.length
-        ? it.images
-        : it.displayUrl
-          ? [it.displayUrl]
-          : [];
-    const post: Post = {
-      caption: it.caption ?? "",
-      images: images.map(cdnUrl),
-      url: it.url ?? null,
-      takenAt: it.timestamp
-        ? Math.floor(Date.parse(it.timestamp) / 1000)
-        : null,
-      pinned: !!it.isPinned,
-    };
-    (byUser.get(u) ?? byUser.set(u, []).get(u)!).push(post);
+    (byUser.get(u) ?? byUser.set(u, []).get(u)!).push(toPost(it));
   }
   return handles.map((h) => choose(h, byUser.get(h) ?? []));
 }
@@ -276,19 +294,23 @@ async function persistImages(
 // its images to Blob, cache, return. One Apify run per profile keeps each card
 // independent and fast.
 //
-// `force` skips the read (not the write): when a gym posts an updated schedule
-// mid-week the week-TTL cache still holds the older image, so a user-driven
-// refresh bypasses the cache, re-scrapes, and overwrites the stale entry.
+// Force restart (force/postUrl/limit) skips the cache read and overwrites the
+// entry on success: when a gym posts an updated schedule mid-week the week-TTL
+// cache still holds the older image, so a user-driven refresh re-scrapes and
+// overwrites the stale entry. A post-link pick likewise sticks for the week.
 export async function fetchTimetable(
   handle: string,
-  force = false,
+  opts: { force?: boolean; postUrl?: string; limit?: number } = {},
 ): Promise<Timetable> {
-  if (!force) {
+  if (!opts.force && !opts.postUrl && opts.limit == null) {
     const cached = await readCache([handle]);
     if (cached[handle]) return cached[handle];
   }
   try {
-    const [t] = await fetchViaApify([handle]);
+    const [t] = await fetchViaApify([handle], {
+      postUrl: opts.postUrl,
+      limit: opts.limit,
+    });
     if (!t.error) t.images = await persistImages(handle, t.images);
     // real timetable → week TTL; "no posts" → ERROR_TTL (negative-cached).
     await writeCache([t]);

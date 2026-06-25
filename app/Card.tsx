@@ -4,6 +4,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Timetable } from "@/lib/instagram";
 
+// takenAt is unix seconds → "3 Jun 2026". null when no post / not scraped yet.
+const fmtDate = (s: number) =>
+  new Date(s * 1000).toLocaleDateString(undefined, {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+
 const proxied = (u: string) => `/api/img?u=${encodeURIComponent(u)}`;
 // IG CDN urls can't be hotlinked → route via proxy; Blob/other urls load direct.
 const src = (u: string) =>
@@ -24,17 +32,20 @@ export default function Card({
   const [loading, setLoading] = useState(!initialT);
   const [i, setI] = useState((initialT?.images.length ?? 0) > 1 ? 1 : 0); // carousel cover often a banner; 2nd usually the schedule
   const [open, setOpen] = useState(false);
+  const [forceOpen, setForceOpen] = useState(false);
   const [cardImageLoading, setCardImageLoading] = useState(true);
 
-  // force → append ?refresh=1 so the server bypasses the month cache and
-  // re-scrapes (gym posted a new schedule mid-month). User-driven actions
-  // (refresh button, retry) force; the on-scroll auto-fetch never does.
+  // Force restart appends force=1 (+ optional link/limit) so the server bypasses
+  // the week cache and re-scrapes. User-driven (force dialog, retry); the
+  // on-scroll auto-fetch never forces.
   const load = useCallback(
-    (force = false) => {
+    (opts?: { force?: boolean; link?: string; limit?: number }) => {
       setLoading(true);
-      return fetch(
-        `/api/timetable?handle=${encodeURIComponent(handle)}${force ? "&refresh=1" : ""}`,
-      )
+      const p = new URLSearchParams({ handle });
+      if (opts?.force) p.set("force", "1");
+      if (opts?.link) p.set("link", opts.link);
+      if (opts?.limit) p.set("limit", String(opts.limit));
+      return fetch(`/api/timetable?${p.toString()}`)
         .then((r) => r.json())
         .then((d: Timetable) => {
           setT(d);
@@ -113,29 +124,15 @@ export default function Card({
               </span>
             )
           )}
-          {/* Force re-scrape: bypasses the month cache when a gym posts an
-              updated schedule mid-month and the card still shows last week's. */}
           <button
             type="button"
-            onClick={() => load(true)}
+            onClick={() => setForceOpen(true)}
             disabled={loading}
-            aria-label="Force refresh"
-            title="Force refresh — re-fetch latest schedule"
-            className="flex h-7 w-7 items-center justify-center rounded-md border-2 border-line bg-surface text-ink shadow-[2px_2px_0_0_var(--shadow)] transition-all hover:bg-accent hover:text-white active:translate-x-[2px] active:translate-y-[2px] active:shadow-none disabled:cursor-not-allowed disabled:opacity-50"
+            title="Force re-scrape (post link / count override)"
+            aria-label="Force restart"
+            className="inline-flex items-center gap-1 rounded-md border-2 border-line bg-surface px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wide text-muted shadow-[2px_2px_0_0_var(--shadow)] transition-all hover:bg-accent hover:text-white active:translate-x-[2px] active:translate-y-[2px] active:shadow-none disabled:cursor-not-allowed disabled:opacity-50"
           >
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden
-              className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`}
-            >
-              <path d="M21 12a9 9 0 1 1-2.64-6.36" />
-              <path d="M21 3v6h-6" />
-            </svg>
+            ⟳ Force
           </button>
         </div>
       </div>
@@ -160,7 +157,7 @@ export default function Card({
                 }}
                 onLoad={() => setCardImageLoading(false)}
                 onError={() => setCardImageLoading(false)}
-                className="h-full w-full object-cover transition-transform duration-500 ease-out group-hover/card:scale-[1.02]"
+                className="h-full w-full object-contain transition-transform duration-500 ease-out group-hover/card:scale-[1.02]"
               />
             </button>
             {cardImageLoading && (
@@ -210,6 +207,13 @@ export default function Card({
         )}
       </div>
 
+      {t?.takenAt && (
+        <div className="flex h-8 items-center gap-1.5 border-t-2 border-line px-4 font-mono text-[10px] uppercase tracking-wide text-muted">
+          <span className="font-bold">Posted</span>
+          {fmtDate(t.takenAt)}
+        </div>
+      )}
+
       {t?.postUrl ? (
         <a
           href={t.postUrl}
@@ -242,7 +246,114 @@ export default function Card({
           onClose={() => setOpen(false)}
         />
       )}
+
+      {forceOpen && (
+        <ForceDialog
+          handle={handle}
+          onClose={() => setForceOpen(false)}
+          onRun={(link, limit) => {
+            setForceOpen(false);
+            load({ force: true, link, limit });
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+// Force restart: re-scrape this profile, bypassing the month cache. Optional post
+// link fetches that exact post (takes precedence); count overrides scrape depth.
+function ForceDialog({
+  handle,
+  onClose,
+  onRun,
+}: {
+  handle: string;
+  onClose: () => void;
+  onRun: (link?: string, limit?: number) => void;
+}) {
+  const [link, setLink] = useState("");
+  const [count, setCount] = useState("");
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  if (typeof document === "undefined") return null;
+
+  const submit = () => {
+    const l = link.trim();
+    const n = parseInt(count, 10);
+    onRun(l || undefined, Number.isFinite(n) && n > 0 ? n : undefined);
+  };
+
+  return createPortal(
+    <div
+      onClick={onClose}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-sm rounded-lg border-2 border-line bg-surface p-5 shadow-[6px_6px_0_0_var(--shadow)]"
+      >
+        <h3 className="mb-1 text-sm font-semibold tracking-tight text-ink">
+          Force restart
+        </h3>
+        <p className="mb-4 font-mono text-[11px] text-muted">
+          @{handle} — re-scrapes, bypassing this month&apos;s cache.
+        </p>
+
+        <label className="mb-1 block font-mono text-[10px] font-bold uppercase tracking-wide text-muted">
+          Post link (optional)
+        </label>
+        <input
+          type="url"
+          value={link}
+          onChange={(e) => setLink(e.target.value)}
+          placeholder="https://instagram.com/p/…"
+          className="mb-1 w-full rounded-md border-2 border-line bg-canvas px-3 py-2 text-sm text-ink shadow-[2px_2px_0_0_var(--shadow)] placeholder:text-muted/60 focus:shadow-[3px_3px_0_0_var(--accent)] focus:outline-none"
+        />
+        <p className="mb-4 font-mono text-[10px] text-muted/70">
+          Takes precedence over count — fetches that exact post.
+        </p>
+
+        <label className="mb-1 block font-mono text-[10px] font-bold uppercase tracking-wide text-muted">
+          Number of posts (default 4)
+        </label>
+        <input
+          type="number"
+          min={1}
+          max={50}
+          value={count}
+          onChange={(e) => setCount(e.target.value)}
+          placeholder="4"
+          disabled={link.trim().length > 0}
+          className="mb-5 w-full rounded-md border-2 border-line bg-canvas px-3 py-2 text-sm text-ink shadow-[2px_2px_0_0_var(--shadow)] placeholder:text-muted/60 focus:shadow-[3px_3px_0_0_var(--accent)] focus:outline-none disabled:opacity-40"
+        />
+
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-md border-2 border-line bg-surface px-3 py-1.5 font-mono text-[11px] font-bold uppercase tracking-wide text-ink shadow-[2px_2px_0_0_var(--shadow)] transition-all hover:bg-canvas active:translate-x-[2px] active:translate-y-[2px] active:shadow-none"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={submit}
+            className="rounded-md border-2 border-line bg-accent px-3 py-1.5 font-mono text-[11px] font-bold uppercase tracking-wide text-white shadow-[2px_2px_0_0_var(--shadow)] transition-all hover:opacity-90 active:translate-x-[2px] active:translate-y-[2px] active:shadow-none"
+          >
+            Run
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
 

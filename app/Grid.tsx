@@ -220,11 +220,16 @@ export default function Grid({ items }: { items: Item[] }) {
   // (both async, so no synchronous setState-in-effect).
   const [now, setNow] = useState<number | null>(null);
   useEffect(() => {
-    // JS getDay() is 0=Sun..6=Sat; our week is Mon-first.
     const tick = () => {
-      const d = new Date();
+      // Schedules are Malaysia-local, so compute "now" in MYT (UTC+8, no DST)
+      // regardless of the viewer's device timezone — shift the epoch by +8h,
+      // then read UTC fields as MYT wall-clock. getUTCDay() is 0=Sun..6=Sat;
+      // our week is Mon-first.
+      const d = new Date(Date.now() + 8 * 3600_000);
       setNow(
-        ((d.getDay() + 6) % 7) * 1440 + d.getHours() * 60 + d.getMinutes(),
+        ((d.getUTCDay() + 6) % 7) * 1440 +
+          d.getUTCHours() * 60 +
+          d.getUTCMinutes(),
       );
     };
     const raf = requestAnimationFrame(tick);

@@ -479,7 +479,7 @@ function GlobalList({
     // Measure the live sticky stack (page header + filter toolbar) so the anchor
     // clears them — heights differ on mobile (taller, wrapped) vs desktop.
     const header = document.querySelector("header");
-    const toolbar = document.querySelector("[data-toolbar]");
+    const toolbar = document.querySelector<HTMLElement>("[data-toolbar]");
     const offset =
       (header?.offsetHeight ?? 0) + (toolbar?.offsetHeight ?? 0) + 8;
     const top = el.getBoundingClientRect().top + window.scrollY - offset;

@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
@@ -12,10 +12,24 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+const TITLE = "AF Timetables — Class schedules by branch";
+const DESCRIPTION =
+  "Latest class timetable post for each Anytime Fitness branch, nearest first.";
+
 export const metadata: Metadata = {
-  title: "AF Timetables — Class schedules by branch",
-  description:
-    "Latest class timetable post for each Anytime Fitness branch, nearest first.",
+  applicationName: "AF Timetables",
+  title: TITLE,
+  description: DESCRIPTION,
+  openGraph: { title: TITLE, description: DESCRIPTION, type: "website" },
+  // icons (app/icon.png, app/favicon.ico, app/apple-icon.png) are auto-wired.
+};
+
+// Browser chrome matches the header (--canvas), light + dark.
+export const viewport: Viewport = {
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#fbfafc" },
+    { media: "(prefers-color-scheme: dark)", color: "#201d29" },
+  ],
 };
 
 export default function RootLayout({

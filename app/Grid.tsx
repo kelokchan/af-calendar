@@ -478,8 +478,13 @@ function GlobalList({
   useEffect(() => {
     const toolbar = document.querySelector<HTMLElement>("[data-toolbar]");
     const measure = () => {
-      const header = document.querySelector("header");
-      setStackTop((header?.offsetHeight ?? 0) + (toolbar?.offsetHeight ?? 0));
+      if (!toolbar) return;
+      // Stick flush to the toolbar's pinned bottom. Use the toolbar's own sticky
+      // offset (its `top-14`), NOT the header height — the header's bottom border
+      // makes it 1px taller than where the toolbar actually pins, which otherwise
+      // leaves a 1px sliver of list showing above the day label.
+      const top = parseFloat(getComputedStyle(toolbar).top) || 0;
+      setStackTop(top + toolbar.offsetHeight);
     };
     measure();
     const ro = new ResizeObserver(measure);

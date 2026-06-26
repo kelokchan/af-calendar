@@ -348,9 +348,13 @@ function ScheduleList({
   })).filter((g) => g.rows.length);
 
   return (
-    <div className="absolute inset-0 overflow-y-auto bg-canvas px-3 py-3">
+    <div className="absolute inset-0 overflow-y-auto bg-canvas px-3 pb-3">
       {byDay.map((g) => (
-        <div key={g.day} className="mb-3 last:mb-0">
+        // No top padding on the scroll box: a sticky `top-0` label pins to the
+        // content box (inset by padding), so a top pad leaves a band of rows
+        // showing above the pinned label. Resting breathing room goes on the
+        // first group only (first:pt-3) — it sits under the label when pinned.
+        <div key={g.day} className="mb-3 first:pt-3 last:mb-0">
           <div className="sticky top-0 mb-1 bg-canvas pb-1 text-[11px] font-semibold uppercase tracking-wide text-muted">
             {g.day}
           </div>

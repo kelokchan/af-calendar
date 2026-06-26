@@ -31,7 +31,7 @@ export default async function Home() {
 
   return (
     <main className="min-h-screen">
-      <header className="sticky top-0 z-20 border-b border-line bg-canvas/85 backdrop-blur">
+      <header className="sticky top-0 z-20 border-b border-line bg-canvas">
         <div className="mx-auto flex w-full max-w-[120rem] flex-wrap items-center justify-between gap-x-6 gap-y-2 px-4 py-3 sm:px-6">
           <div className="flex items-center gap-3">
             {/* eslint-disable-next-line @next/next/no-img-element */}

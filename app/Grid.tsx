@@ -470,6 +470,27 @@ function GlobalList({
       ? (todayRows[0]?.pos ?? -1)
       : (todayRows.filter((r) => r.pos <= now).at(-1)?.pos ?? todayRows[0].pos);
 
+  // Live height of the sticky stack above the list (page header + filter
+  // toolbar). The day label sticks right below it; heights differ on mobile
+  // (taller, wrapped) vs desktop, and the toolbar can re-wrap, so measure +
+  // watch for resize rather than hard-code a px offset.
+  const [stackTop, setStackTop] = useState(56);
+  useEffect(() => {
+    const toolbar = document.querySelector<HTMLElement>("[data-toolbar]");
+    const measure = () => {
+      const header = document.querySelector("header");
+      setStackTop((header?.offsetHeight ?? 0) + (toolbar?.offsetHeight ?? 0));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    if (toolbar) ro.observe(toolbar);
+    window.addEventListener("resize", measure);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, []);
+
   // Scroll the anchor into view on mount (switching into list view) and on day
   // rollover — NOT every minute, so the keys deliberately exclude anchorPos/now.
   const anchorRef = useRef<HTMLLIElement>(null);
@@ -494,7 +515,10 @@ function GlobalList({
     <div className="flex flex-col gap-6">
       {byDay.map((g) => (
         <section key={g.day}>
-          <h3 className="mb-1.5 flex items-center gap-2 text-sm font-semibold tracking-tight text-ink">
+          <h3
+            style={{ top: stackTop }}
+            className="sticky z-[5] -mx-1 mb-1.5 flex items-center gap-2 bg-canvas px-1 py-1.5 text-sm font-semibold tracking-tight text-ink"
+          >
             {DAY_LABEL[g.day]}
             {g.idx === todayIdx && (
               <span className="rounded-full bg-accent-soft px-2 py-0.5 text-[11px] font-medium text-accent-ink">

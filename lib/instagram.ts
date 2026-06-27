@@ -148,7 +148,7 @@ async function scrapePosts(
       ? [opts.postUrl]
       : [`https://www.instagram.com/${handle}/`],
     resultsType: "posts",
-    resultsLimit: opts.limit ?? 12, // deeper window so a buried monthly schedule (sunk below newer promos) stays reachable. Age cap below bounds the cost.
+    resultsLimit: opts.limit ?? 4, // newest few only; the timetable is the current/pinned post, rarely buried deep. Age cap below further bounds cost.
     addParentData: false,
   };
   // Default profile scrape only → cap by age to cut billed results. A forced
@@ -180,11 +180,13 @@ async function scrapePosts(
 
 const N_CANDIDATES = 5; // top recent posts shown to the model; the miss-case timetable is recent, just outranked
 
-// Chosen by eval (3 real timetables + 1 meme post). 2.5-flash matches the gold
-// model (gemini-3-pro) pixel-for-pixel on real grids AND correctly returns 0 on
-// non-timetable images; cheaper flash-lite/nova-lite HALLUCINATE classes from
-// memes/promos — fabricating a schedule, the one failure we can't ship.
-const VISION_MODEL = "google/gemini-2.5-flash";
+// 2.5-flash misread dense grids: on SS15 it drifted Saturday's 11:30 Hatha Yoga
+// into the empty 20:00 cell ~1 in 4 runs (time printed above icon, instructor
+// below, short day-columns leaving blanks below). 3.1-flash-lite reads the same
+// grid correctly 5/5 — matching gold gemini-3-pro — while staying flash-tier
+// cheap. The classify step + the schedule.length guard still gate out the
+// meme/promo fabrication that older lite models produced.
+const VISION_MODEL = "google/gemini-3.1-flash-lite";
 
 // Step 1 — classify: which candidate cover image is the weekly timetable? -1 = none.
 const ClassifyResult = z.object({ timetableIndex: z.number().int() });

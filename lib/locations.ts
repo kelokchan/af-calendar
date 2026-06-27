@@ -163,4 +163,22 @@ export const LOCATIONS: Location[] = [
     lat: 3.219,
     lng: 101.566,
   },
+  {
+    handle: "af.wismamcis_pj",
+    name: "Wisma MCIS, PJ",
+    lat: 3.106,
+    lng: 101.643,
+  },
+  {
+    handle: "af.yolosignaturesuites",
+    name: "YOLO Signature Suites, Bandar Sunway",
+    lat: 3.067,
+    lng: 101.606,
+  },
+  {
+    handle: "af_platinumarena",
+    name: "Platinum Arena, Old Klang Road",
+    lat: 3.094,
+    lng: 101.676,
+  },
 ];

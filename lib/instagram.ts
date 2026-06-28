@@ -382,9 +382,10 @@ export async function extractSchedule(
 
 // ---- Redis cache ------------------------------------------------------------
 // One key per (week, location): `af-cal:tt:YYYY-MM-DD:<handle>`, where the date
-// is the Monday that opens the cache week (MYT) and the key expires at the next
-// Sunday-night boundary. Gyms post a fresh weekly timetable each Sunday night,
-// so a handle is scraped at most once per week; week rollover ⇒ new key
+// is the Monday that labels the cache week (MYT); the week actually opens — and
+// the key expires — at the prior Sunday 22:00 MYT. Gyms post a fresh weekly
+// timetable each Sunday night, so a handle is scraped at most once per week and
+// the Sun-22:00 cron warms the fresh schedule; week rollover ⇒ new key
 // namespace ⇒ everyone re-scrapes the new week's schedule automatically.
 // Per-key (vs one blob) means concurrent renders never clobber each other's
 // writes, and only scraped handles are written. Successes live to week end;
@@ -405,27 +406,34 @@ const redis =
     ? Redis.fromEnv()
     : null;
 
-// The week's anchor: the Monday 00:00 MYT that opens the current cache week
-// (i.e. the boundary right after the previous Sunday night). Returns both a
-// stable namespace label and the seconds left until the *next* Sunday-night
-// rollover so cache TTL and key share one source of truth.
+// The cache week opens at Sunday 22:00 MYT — the moment gyms have posted the new
+// week's timetable, and when the weekly cron fires to pre-warm it. We anchor on
+// that boundary by shifting the clock forward 2h so it reads as a Monday 00:00 in
+// this frame, reuse the Monday math, then subtract the shift back for the real
+// instant. The label stays the opening Monday's ISO date (stable namespace);
+// only the real boundary moved 2h earlier, from Mon 00:00 to the prior Sun 22:00.
+// Returns the label plus seconds until the *next* Sun-22:00 rollover so cache TTL
+// and key share one source of truth.
+const WEEK_BOUNDARY_SHIFT = 2 * 60 * 60 * 1000; // Sun 22:00 MYT = Mon 00:00 − 2h
 function weekAnchor(now: number = Date.now()): {
   label: string;
   expiresInSecs: number;
 } {
-  // Shift into MYT wall-clock: reading UTC fields of the shifted date yields
-  // Malaysian local Y/M/D/day.
-  const myt = new Date(now + MYT_OFFSET);
-  const sinceMon = (myt.getUTCDay() + 6) % 7; // days since this week's Monday
-  // Monday 00:00 of the current MYT week, expressed as an "as-if-UTC" instant.
+  // Shift into MYT wall-clock plus the 2h boundary shift, so Sun 22:00 MYT reads
+  // as a Monday 00:00 here: reading UTC fields then yields the week's anchor day.
+  const myt = new Date(now + MYT_OFFSET + WEEK_BOUNDARY_SHIFT);
+  const sinceMon = (myt.getUTCDay() + 6) % 7; // days since this week's anchor Monday
+  // Anchor Monday 00:00 (in the shifted frame), expressed as an "as-if-UTC" instant.
   const mondayAsUtc = Date.UTC(
     myt.getUTCFullYear(),
     myt.getUTCMonth(),
     myt.getUTCDate() - sinceMon,
   );
   const label = new Date(mondayAsUtc).toISOString().slice(0, 10); // YYYY-MM-DD
-  // Next Monday 00:00 MYT, back in real epoch ms, is when Redis evicts the key.
-  const nextRollover = mondayAsUtc + 7 * 24 * 60 * 60 * 1000 - MYT_OFFSET;
+  // Undo MYT + boundary shift to get this week's real Sun-22:00 boundary, then +7d
+  // is the next Sun-22:00 MYT — when Redis evicts the key.
+  const thisRollover = mondayAsUtc - MYT_OFFSET - WEEK_BOUNDARY_SHIFT;
+  const nextRollover = thisRollover + 7 * 24 * 60 * 60 * 1000;
   return {
     label,
     expiresInSecs: Math.max(1, Math.ceil((nextRollover - now) / 1000)),
@@ -434,7 +442,7 @@ function weekAnchor(now: number = Date.now()): {
 
 const keyFor = (handle: string) => `af-cal:tt:${weekAnchor().label}:${handle}`;
 
-// Seconds until the next Sunday-night rollover (MYT) — Redis evicts the key then.
+// Seconds until the next Sun-22:00 MYT rollover — Redis evicts the key then.
 const secsToWeekEnd = (): number => weekAnchor().expiresInSecs;
 
 async function readCache(

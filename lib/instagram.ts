@@ -112,6 +112,7 @@ type ApifyItem = {
   timestamp?: string;
   type?: string;
   isPinned?: boolean;
+  error?: string; // set (e.g. "no_items") when IG blocked the scrape → stub item, no media
 };
 
 function toPost(it: ApifyItem): Post {
@@ -167,7 +168,18 @@ async function scrapePosts(
   );
   if (!res.ok) throw new Error(`Apify HTTP ${res.status}`);
   const items: ApifyItem[] = await res.json();
-  return items.map(toPost);
+  // IG intermittently blocks Apify's logged-out scraper; it then returns stub
+  // items carrying an `error` ("no_items" / "Empty or private data") and no media.
+  // An all-stub response is a transient BLOCK, not "this profile has no posts" —
+  // throw so the caller serves last week's timetable on a short TTL and re-scrapes
+  // soon, instead of caching an empty/wrong pick for the whole week. A partial
+  // block (some real, some stub) just drops the stubs.
+  const real = items.filter((it) => !it.error);
+  if (items.length && !real.length)
+    throw new Error(
+      `Apify blocked (${items.length} empty items) for ${handle}`,
+    );
+  return real.map(toPost);
 }
 
 // ---- Vision: identify the timetable post + extract its schedule -------------
@@ -487,13 +499,20 @@ async function readPriorConfident(handle: string): Promise<Timetable | null> {
   }
 }
 
-async function writeCache(entries: Timetable[]): Promise<void> {
+// ttlOverride forces a short TTL for a provisional write (e.g. a carry-over
+// served while IG is blocking) so it re-scrapes soon instead of locking the week.
+async function writeCache(
+  entries: Timetable[],
+  ttlOverride?: number,
+): Promise<void> {
   if (!redis || !entries.length) return;
   try {
     const weekEx = secsToWeekEnd();
     const p = redis.pipeline();
     for (const t of entries) {
-      p.set(keyFor(t.handle), t, { ex: t.error ? ERROR_TTL : weekEx });
+      p.set(keyFor(t.handle), t, {
+        ex: ttlOverride ?? (t.error ? ERROR_TTL : weekEx),
+      });
     }
     await p.exec();
   } catch {
@@ -617,7 +636,16 @@ export async function fetchTimetable(
     await writeCache([t]);
     return t;
   } catch (e) {
-    // Infra failure (403/timeout): serve error, don't cache → retries next load.
+    // Scrape failed or IG blocked Apify (403 / timeout / all-empty). Don't lock
+    // the week: serve last week's confident timetable if we have one so the card
+    // isn't blank, but cache it only briefly (ERROR_TTL) so we re-scrape and pick
+    // up this week's post the moment IG unblocks. No prior → bare error, uncached,
+    // retried next load.
+    const prior = await readPriorConfident(handle);
+    if (prior) {
+      await writeCache([prior], ERROR_TTL);
+      return prior;
+    }
     return errorFor(handle, e);
   }
 }

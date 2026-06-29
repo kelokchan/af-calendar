@@ -1,16 +1,16 @@
 import { LOCATIONS } from "@/lib/locations";
 import { fetchTimetable } from "@/lib/instagram";
 
-// Weekly pre-warm. The Vercel cron (Sun 22:00 MYT — see vercel.json) fires right
-// at the Sunday-night cache rollover, so every handle is scraped into Redis
-// before any visitor arrives → instant first paint all week. Cards still
-// self-fetch on a cache miss, so a partial run (a slow Apify scrape, a timeout)
-// self-heals on view — the cron needn't be all-or-nothing.
+// Weekly pre-warm via Apify. The Vercel cron (Sun 22:00 MYT — see vercel.json)
+// fires right at the Sunday-night cache rollover and BATCH-populates Redis: every
+// handle is Apify-scraped before any visitor arrives → instant first paint all
+// week. A partial run (slow scrape, timeout, IG block on a handle) is fine — the
+// carried-forward prior or the "awaiting sync" marker covers the tail.
 //
-// fetchTimetable reads cache first; the week's keys expire exactly at the Sun
-// 22:00 MYT rollover (the cron's slot), so each call lands on the scrape path.
-// No `force` needed — and an early-bird visitor who already warmed a handle just
-// returns a cache hit here, saving an Apify run.
+// `force: true` is required: a normal fetchTimetable read is cache-only (Apify is
+// reserved for explicit force/retry), so without it the cron would just read the
+// just-expired cache and never scrape. force bypasses the cache and spends one
+// Apify run per handle — which is the whole point of the weekly populator.
 export const dynamic = "force-dynamic";
 export const maxDuration = 300; // Vercel ceiling; a partial run is fine (lazy self-heals the tail)
 
@@ -36,7 +36,7 @@ export async function GET(req: Request) {
       handles.slice(i, i + CHUNK).map((h) =>
         // fetchTimetable never throws (it returns an error Timetable); the reject
         // arm is just belt-and-suspenders.
-        fetchTimetable(h).then(
+        fetchTimetable(h, { force: true }).then(
           (t) => !t.error,
           () => false,
         ),

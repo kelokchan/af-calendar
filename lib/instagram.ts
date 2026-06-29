@@ -75,7 +75,7 @@ function looksLikeTimetable(caption: string): boolean {
 // extractSchedule still verifies the pick, so a false positive just yields zero
 // sessions and falls through to the classifier — no wrong data gets cached.
 const MONTHS = "jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec";
-function captionLikelyTimetable(caption: string): boolean {
+export function captionLikelyTimetable(caption: string): boolean {
   const c = caption.toLowerCase();
   if (looksLikeTimetable(c)) return true;
   if (
@@ -136,7 +136,16 @@ type ApifyItem = {
   timestamp?: string;
   type?: string;
   isPinned?: boolean;
-  error?: string; // set (e.g. "no_items") when IG blocked the scrape → stub item, no media
+};
+
+// apify/instagram-profile-scraper returns one item per username: the profile,
+// with its recent posts inlined as `latestPosts`. `error` is set (e.g.
+// "no_items" / "Empty or private data") when IG blocked/walled the scrape.
+type ProfileItem = {
+  username?: string;
+  private?: boolean;
+  latestPosts?: ApifyItem[];
+  error?: string;
 };
 
 function toPost(it: ApifyItem): Post {
@@ -156,54 +165,54 @@ function toPost(it: ApifyItem): Post {
   };
 }
 
-// opts (force restart): postUrl scrapes that exact post (overrides the profile
-// scrape, takes precedence); limit overrides the default depth. Either one drops
-// the age cap so the count is the only limit and old pinned posts stay reachable.
+// opts (force restart): postUrl narrows the scrape to that exact post (takes
+// precedence); limit overrides how many recent posts we keep.
 type ScrapeOpts = { postUrl?: string; limit?: number };
 
-// One profile (or one post link) → its posts, newest first. Single-handle, so
-// every returned item belongs to this handle; no username grouping needed.
+// One profile → its recent posts, newest first.
+//
+// Uses apify/instagram-profile-scraper, NOT apify/instagram-scraper: the latter
+// fetches each post's detail page, a step IG now hard-blocks logged-out (every
+// run came back as "no_items" stubs — the "Apify blocked" symptom). The profile
+// scraper reads IG's web-profile endpoint in one request and inlines the recent
+// posts as `latestPosts`, which still gets through.
 async function scrapePosts(
   handle: string,
   opts: ScrapeOpts = {},
 ): Promise<Post[]> {
   const token = process.env.APIFY_TOKEN!;
-  const body: Record<string, unknown> = {
-    directUrls: opts.postUrl
-      ? [opts.postUrl]
-      : [`https://www.instagram.com/${handle}/`],
-    resultsType: "posts",
-    resultsLimit: opts.limit ?? 4, // newest few only; the timetable is the current/pinned post, rarely buried deep. Age cap below further bounds cost.
-    addParentData: false,
-  };
-  // Default profile scrape only → cap by age to cut billed results. A forced
-  // post-link or custom count means "fetch what I asked", so don't age-filter.
-  if (!opts.postUrl && opts.limit == null) body.onlyPostsNewerThan = "2 months"; // stop early on active gyms — fewer billed results
   const res = await fetch(
-    `https://api.apify.com/v2/acts/apify~instagram-scraper/run-sync-get-dataset-items?token=${token}`,
+    `https://api.apify.com/v2/acts/apify~instagram-profile-scraper/run-sync-get-dataset-items?token=${token}`,
     {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ usernames: [handle] }),
       // ponytail: cap the sync scrape so a stuck Apify run can't hang the request
       // forever. Called per-profile, so this is one profile's budget.
       signal: AbortSignal.timeout(120_000),
     },
   );
   if (!res.ok) throw new Error(`Apify HTTP ${res.status}`);
-  const items: ApifyItem[] = await res.json();
-  // IG intermittently blocks Apify's logged-out scraper; it then returns stub
-  // items carrying an `error` ("no_items" / "Empty or private data") and no media.
-  // An all-stub response is a transient BLOCK, not "this profile has no posts" —
-  // throw so the caller serves last week's timetable on a short TTL and re-scrapes
-  // soon, instead of caching an empty/wrong pick for the whole week. A partial
-  // block (some real, some stub) just drops the stubs.
-  const real = items.filter((it) => !it.error);
-  if (items.length && !real.length)
+  const items: ProfileItem[] = await res.json();
+  const profile = items[0];
+  // No profile, an error flag, or zero inlined posts = IG walled/blocked this
+  // scrape (or a private/renamed handle). Throw so the caller serves last week's
+  // timetable on a short TTL and re-scrapes soon, instead of caching an empty pick.
+  let posts = profile?.latestPosts ?? [];
+  if (!profile || profile.error || !posts.length)
     throw new Error(
-      `Apify blocked (${items.length} empty items) for ${handle}`,
+      `Apify blocked (${profile?.error ?? "no posts"}) for ${handle}`,
     );
-  return real.map(toPost);
+  // ponytail: profile-scraper can't target a single post URL, so a pasted link
+  // filters the profile's recent posts to that one (works for posts in the latest
+  // window — the common case). Falls back to all if the link is older/not found.
+  if (opts.postUrl) {
+    const hit = posts.filter((p) => p.url && opts.postUrl!.startsWith(p.url));
+    if (hit.length) posts = hit;
+  } else if (opts.limit != null) {
+    posts = posts.slice(0, opts.limit);
+  }
+  return posts.map(toPost);
 }
 
 // ---- Vision: identify the timetable post + extract its schedule -------------
@@ -597,6 +606,15 @@ export async function syncTimetableFromPosts(
 ): Promise<Timetable> {
   const norm = posts.map((p) => ({ ...p, images: p.images.map(cdnUrl) }));
   if (!norm.length) {
+    // Empty scrape (no posts / IG throttled this gym). NEVER clobber a good
+    // entry: keep the last confident timetable if we have one (re-anchored into
+    // this week so it survives the rollover); only negative-cache when there's
+    // nothing to preserve.
+    const prior = await readPriorConfident(handle);
+    if (prior) {
+      await writeCache([prior]);
+      return prior;
+    }
     const t = errorFor(handle, new Error("no posts"));
     await writeCache([t]);
     return t;
@@ -660,7 +678,11 @@ async function persistImages(
   handle: string,
   urls: string[],
 ): Promise<string[]> {
-  if (!process.env.BLOB_READ_WRITE_TOKEN || !urls.length) return urls;
+  if (!process.env.BLOB_READ_WRITE_TOKEN) {
+    console.warn(`[blob] no BLOB_READ_WRITE_TOKEN — keeping IG URLs for ${handle}`);
+    return urls;
+  }
+  if (!urls.length) return urls;
   const week = weekAnchor().label;
   return Promise.all(
     urls.map(async (u, i) => {
@@ -672,14 +694,23 @@ async function persistImages(
           },
           signal: AbortSignal.timeout(15_000),
         });
-        if (!res.ok) return u; // fall back to IG URL (proxy can still try)
-        const { url } = await put(`tt/${week}/${handle}-${i}.jpg`, res.body!, {
+        if (!res.ok) {
+          console.warn(`[blob] fetch ${handle}#${i} → HTTP ${res.status}; keeping IG URL`);
+          return u; // fall back to IG URL (proxy can still try)
+        }
+        // Buffer the bytes — passing a web ReadableStream (res.body) to put()
+        // is unreliable in Node and silently fails; a Buffer always works.
+        const buf = Buffer.from(await res.arrayBuffer());
+        const { url } = await put(`tt/${week}/${handle}-${i}.jpg`, buf, {
           access: "public",
           allowOverwrite: true,
           contentType: res.headers.get("content-type") ?? "image/jpeg",
         });
         return url;
-      } catch {
+      } catch (e) {
+        console.error(
+          `[blob] upload failed ${handle}#${i}: ${e instanceof Error ? e.message : e} — keeping IG URL`,
+        );
         return u;
       }
     }),

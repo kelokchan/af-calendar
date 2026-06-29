@@ -25,7 +25,11 @@ import {
   type Page,
 } from "playwright";
 import { LOCATIONS } from "../lib/locations";
-import { syncTimetableFromPosts, type Post } from "../lib/instagram";
+import {
+  syncTimetableFromPosts,
+  captionLikelyTimetable,
+  type Post,
+} from "../lib/instagram";
 
 // Timestamped logger so sync.log lines are self-dating across weekly runs.
 const ts = () =>
@@ -40,7 +44,7 @@ const fmtDate = (unix: number | null) =>
 
 const SESSION_FILE = path.join(process.cwd(), "ig-session.json");
 const POSTS_PER_PROFILE = 12; // some gyms bury the timetable under promos + pinned posts (e.g. SS2), so read deeper
-const CONCURRENCY = 3; // parallel profiles — keep modest so IG doesn't rate-limit
+const CONCURRENCY = 2; // parallel profiles — keep low so IG doesn't rate-limit/wall
 const NAV_TIMEOUT = 30_000;
 
 // Small concurrency pool: run `fn` over items, at most `limit` at a time.
@@ -240,7 +244,14 @@ async function scrapeHandle(
   const posts: Post[] = [];
   for (const link of links) {
     const p = await readPost(ctx, link);
-    if (p) posts.push(p);
+    if (p) {
+      posts.push(p);
+      // Early stop: caption-first means once we hit a post whose caption names a
+      // schedule, that's almost certainly the timetable — no need to keep loading
+      // the rest of the profile (fewer requests = far less IG rate-limiting).
+      if (captionLikelyTimetable(p.caption)) break;
+    }
+    await new Promise((r) => setTimeout(r, 400)); // gentle pacing between post loads
   }
   if (!posts.length && links.length)
     console.log(`    [debug] ${handle}: ${links.length} links but all posts unreadable`);

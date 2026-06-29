@@ -522,12 +522,29 @@ async function writeCache(
 
 // ---- Public API -------------------------------------------------------------
 
+// Apify is retired. Schedules are now populated by the weekly browser task
+// (Sunday noon MYT) that reads each gym's Instagram page and POSTs the parsed
+// timetables to /api/ingest → ingestTimetables below. With this false,
+// fetchTimetable never calls Apify: it serves the cache the task wrote, falling
+// back to the most recent confident entry. Set USE_APIFY=1 in the env to revive
+// the old on-demand Apify scrape path (kept intact below for easy rollback).
+const USE_APIFY = process.env.USE_APIFY === "1";
+
 // Read-only: whatever's already cached. SSR uses this so first paint never
-// blocks on Apify — uncached handles are fetched per-card via fetchTimetable.
+// blocks — uncached handles are fetched per-card via fetchTimetable.
 export async function getCached(
   handles: string[],
 ): Promise<Record<string, Timetable>> {
   return readCache(handles);
+}
+
+// Manual ingest path. The weekly browser task scrapes each gym's IG page and
+// hands the parsed timetables here; they're written straight into this week's
+// cache under the same key + TTL a normal scrape would use, so the site renders
+// them exactly as before — no Apify involved. Entries with a real schedule live
+// to week end; error entries are negative-cached (ERROR_TTL) by writeCache.
+export async function ingestTimetables(entries: Timetable[]): Promise<void> {
+  await writeCache(entries);
 }
 
 // Mirror IG CDN images into Vercel Blob. IG signs its URLs with a ~4-day `oe=`
@@ -581,6 +598,15 @@ export async function fetchTimetable(
   if (!opts.force && !opts.postUrl && opts.limit == null) {
     const cached = await readCache([handle]);
     if (cached[handle]) return cached[handle];
+  }
+  // Apify retired: serve only what the weekly ingest task wrote. On a miss, fall
+  // back to the most recent confident entry; else a soft "pending" marker. No
+  // Apify run is ever issued (force/postUrl/limit included — there's nothing to
+  // re-scrape against now).
+  if (!USE_APIFY) {
+    const prior = await readPriorConfident(handle);
+    if (prior) return prior;
+    return errorFor(handle, new Error("Awaiting weekly sync"));
   }
   try {
     const posts = await scrapePosts(handle, {

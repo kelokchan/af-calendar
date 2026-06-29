@@ -543,8 +543,22 @@ export async function getCached(
 // cache under the same key + TTL a normal scrape would use, so the site renders
 // them exactly as before — no Apify involved. Entries with a real schedule live
 // to week end; error entries are negative-cached (ERROR_TTL) by writeCache.
+//
+// Images: the task sends the post's raw Instagram CDN URLs (which expire in
+// ~4 days). We mirror them to Vercel Blob first (persistImages → permanent URLs),
+// then cache those, so images stay viewable the whole week. Without a Blob token
+// persistImages returns the IG URLs unchanged (they'll work for a few days, then
+// the /api/img proxy is the only fallback). cdnUrl normalizes the host so the
+// server-side mirror fetch succeeds regardless of which regional CDN host IG gave.
 export async function ingestTimetables(entries: Timetable[]): Promise<void> {
-  await writeCache(entries);
+  const mirrored = await Promise.all(
+    entries.map(async (e) => {
+      if (e.error || !e.images?.length) return e;
+      const images = await persistImages(e.handle, e.images.map(cdnUrl));
+      return { ...e, images };
+    }),
+  );
+  await writeCache(mirrored);
 }
 
 // Mirror IG CDN images into Vercel Blob. IG signs its URLs with a ~4-day `oe=`

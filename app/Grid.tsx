@@ -207,7 +207,7 @@ export default function Grid({ items }: { items: Item[] }) {
   const [branch, setBranch] = useState(""); // "" = all branches
   const [day, setDay] = useState(""); // "" = any day
   const [from, setFrom] = useState(""); // "HH:MM" or ""
-  const [view, setView] = useState<"grid" | "list">("grid");
+  const [view, setView] = useState<"grid" | "list">("list");
 
   // Branch dropdown options — every gym, alphabetical.
   const branches = [...items]
@@ -340,7 +340,7 @@ export default function Grid({ items }: { items: Item[] }) {
               <button
                 key={v}
                 type="button"
-                onClick={() => { setView(v); if (v === "grid") window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                onClick={() => setView(v)}
                 aria-pressed={view === v}
                 className={`inline-flex h-full items-center gap-1.5 rounded-md px-3 text-sm font-medium transition-colors ${
                   view === v
@@ -354,7 +354,7 @@ export default function Grid({ items }: { items: Item[] }) {
                   <List className="h-4 w-4" />
                 )}
                 <span className="hidden sm:inline">
-                  {v === "grid" ? "Grid" : "List"}
+                  {v === "grid" ? "Cards" : "List"}
                 </span>
               </button>
             ))}
@@ -411,12 +411,19 @@ export default function Grid({ items }: { items: Item[] }) {
       ) : (
         <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,26rem),1fr))] gap-6">
           {shown.map((loc) => {
+            // Open the class list when a day/time facet is set, or when a text
+            // query matched one of this gym's classes (so the hit is visible).
+            const showClasses =
+              !!(dayFacet || fromTime) ||
+              (tokens.length > 0 &&
+                (loc.t?.schedule?.some(matchSessionIn(loc)) ?? false));
             return (
               <Card
                 key={loc.handle}
                 name={loc.name}
                 handle={loc.handle}
                 t={loc.t}
+                defaultList={showClasses}
                 matchSession={facetActive ? matchSessionIn(loc) : undefined}
               />
             );

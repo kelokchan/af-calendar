@@ -51,7 +51,12 @@ function cleanEntry(raw: unknown): Timetable | null {
   const schedule = cleanSchedule(e.schedule);
   return {
     handle: e.handle,
-    images: Array.isArray(e.images) ? (e.images.filter((u) => typeof u === "string") as string[]) : [],
+    // Raw IG image URLs from the scrape; ingestTimetables mirrors them to Blob.
+    images: Array.isArray(e.images)
+      ? (e.images.filter(
+          (u) => typeof u === "string" && /^https?:\/\//.test(u),
+        ) as string[])
+      : [],
     caption: typeof e.caption === "string" ? e.caption : "",
     postUrl: typeof e.postUrl === "string" ? e.postUrl : null,
     takenAt: typeof e.takenAt === "number" ? e.takenAt : null,

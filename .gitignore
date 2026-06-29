@@ -42,3 +42,4 @@ next-env.d.ts
 
 # scraped IG post cache
 /data/
+.sync-checkpoint.json

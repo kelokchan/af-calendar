@@ -312,7 +312,7 @@ export default function Grid({ items }: { items: Item[] }) {
           "yoga at river city at 7pm" (class + branch + time at once). */}
       <div
         data-toolbar
-        className="sticky top-14 z-10 mb-8 flex flex-col gap-2.5 bg-canvas py-3"
+        className="sticky top-14 z-10 mb-3 flex flex-col gap-2.5 bg-canvas py-3"
       >
         <div className="flex flex-row items-center gap-2.5">
           <div className="relative min-w-0 flex-1">
@@ -340,7 +340,10 @@ export default function Grid({ items }: { items: Item[] }) {
               <button
                 key={v}
                 type="button"
-                onClick={() => setView(v)}
+                onClick={() => {
+                  setView(v);
+                  if (v === "grid") window.scrollTo({ top: 0, behavior: "instant" });
+                }}
                 aria-pressed={view === v}
                 className={`inline-flex h-full items-center gap-1.5 rounded-md px-3 text-sm font-medium transition-colors ${
                   view === v

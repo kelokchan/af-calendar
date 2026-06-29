@@ -522,13 +522,13 @@ async function writeCache(
 
 // ---- Public API -------------------------------------------------------------
 
-// Apify is retired. Schedules are now populated by the weekly browser task
-// (Sunday noon MYT) that reads each gym's Instagram page and POSTs the parsed
-// timetables to /api/ingest → ingestTimetables below. With this false,
-// fetchTimetable never calls Apify: it serves the cache the task wrote, falling
-// back to the most recent confident entry. Set USE_APIFY=1 in the env to revive
-// the old on-demand Apify scrape path (kept intact below for easy rollback).
-const USE_APIFY = process.env.USE_APIFY === "1";
+// Division of labour: the weekly browser task (Sunday 22:30 MYT) BATCH-populates
+// Redis — it scrapes every gym's IG page and POSTs the parsed timetables to
+// /api/ingest → ingestTimetables. Apify is reserved for ON-DEMAND RETRY only: a
+// normal page view / lazy card fetch never scrapes (serves cache, else the last
+// confident entry, else an "awaiting sync" marker), so Apify runs are spent only
+// when the user explicitly hits Retry or force-refresh on a card. See the
+// `forced` gate in fetchTimetable below.
 
 // Read-only: whatever's already cached. SSR uses this so first paint never
 // blocks — uncached handles are fetched per-card via fetchTimetable.
@@ -609,15 +609,16 @@ export async function fetchTimetable(
   handle: string,
   opts: { force?: boolean; postUrl?: string; limit?: number } = {},
 ): Promise<Timetable> {
-  if (!opts.force && !opts.postUrl && opts.limit == null) {
+  // Only an explicit Retry / force-refresh (force, or a postUrl/limit override)
+  // is allowed to spend an Apify run. Everything else — SSR, lazy on-scroll card
+  // fetches — is cache-only: the weekly task is the batch populator.
+  const forced = !!(opts.force || opts.postUrl || opts.limit != null);
+  if (!forced) {
     const cached = await readCache([handle]);
     if (cached[handle]) return cached[handle];
-  }
-  // Apify retired: serve only what the weekly ingest task wrote. On a miss, fall
-  // back to the most recent confident entry; else a soft "pending" marker. No
-  // Apify run is ever issued (force/postUrl/limit included — there's nothing to
-  // re-scrape against now).
-  if (!USE_APIFY) {
+    // Cache miss on a normal view: don't scrape. Serve the last confident entry
+    // (carried across the rollover) or a soft "pending" marker until the next
+    // weekly run — or until the user hits Retry, which forces an Apify scrape.
     const prior = await readPriorConfident(handle);
     if (prior) return prior;
     return errorFor(handle, new Error("Awaiting weekly sync"));

@@ -150,18 +150,11 @@ export default function Card({
             <span className="animate-pulse rounded-full bg-surface-2 px-2.5 py-0.5 text-[11px] font-medium text-muted">
               Loading
             </span>
-          ) : t?.matchedMonth ? (
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-accent-soft px-2.5 py-0.5 text-[11px] font-medium text-accent-ink">
-              <span className="h-1.5 w-1.5 rounded-full bg-accent" />
-              Timetable
+          ) : images.length > 0 ? (
+            <span className="rounded-full bg-surface-2 px-2.5 py-0.5 text-[11px] font-medium text-muted">
+              Latest
             </span>
-          ) : (
-            images.length > 0 && (
-              <span className="rounded-full bg-surface-2 px-2.5 py-0.5 text-[11px] font-medium text-muted">
-                Latest
-              </span>
-            )
-          )}
+          ) : null}
           {schedule.length > 0 && (
             <button
               type="button"
@@ -272,7 +265,7 @@ export default function Card({
             )}
             <button
               type="button"
-              onClick={() => load()}
+              onClick={() => setForceOpen(true)}
               className="mt-1 rounded-lg bg-surface-2 px-3 py-1.5 text-xs font-medium text-ink transition-colors hover:bg-accent hover:text-white focus:outline-none focus:ring-2 focus:ring-accent/25"
             >
               Retry

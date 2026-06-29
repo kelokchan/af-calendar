@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { List, ImageIcon, RefreshCw } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import {
   to12h,
   titleCase,
@@ -12,51 +12,22 @@ import {
 
 const DAY_ORDER = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
 
-// takenAt is unix seconds → "3 Jun 2026". null when no post / not scraped yet.
-const fmtDate = (s: number) =>
-  new Date(s * 1000).toLocaleDateString(undefined, {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
-
-const proxied = (u: string) => `/api/img?u=${encodeURIComponent(u)}`;
-// IG CDN urls can't be hotlinked → route via proxy; Blob/other urls load direct.
-const src = (u: string) =>
-  /cdninstagram\.com|fbcdn\.net/.test(u) ? proxied(u) : u;
-
 export default function Card({
   name,
   handle,
   t: initialT,
-  defaultList = false,
   matchSession,
 }: {
   name: string;
   handle: string;
   t?: Timetable;
-  // A class filter is active → open straight to the list. matchSession highlights
-  // the rows that matched, so it's obvious why this gym is in the results.
-  defaultList?: boolean;
   matchSession?: (s: ClassSession) => boolean;
 }) {
   // Cached server-side → render now. Otherwise fetch this one profile on mount,
   // so the grid fills card-by-card instead of blocking on a full batch scrape.
   const [t, setT] = useState<Timetable | undefined>(initialT);
   const [loading, setLoading] = useState(!initialT);
-  const [i, setI] = useState(0); // default to first slide
-  const [open, setOpen] = useState(false);
   const [forceOpen, setForceOpen] = useState(false);
-  const [cardImageLoading, setCardImageLoading] = useState(true);
-  const [listView, setListView] = useState(defaultList);
-  // Re-sync with the global filter when it flips — React's "adjust state on prop
-  // change" pattern (during render, not an effect), so the per-card toggle stays
-  // free to override in between.
-  const [prevDefault, setPrevDefault] = useState(defaultList);
-  if (defaultList !== prevDefault) {
-    setPrevDefault(defaultList);
-    setListView(defaultList);
-  }
 
   // Force restart appends force=1 (+ optional link/limit) so the server bypasses
   // the week cache and re-scrapes. User-driven (force dialog, retry); the
@@ -72,8 +43,6 @@ export default function Card({
         .then((r) => r.json())
         .then((d: Timetable) => {
           setT(d);
-          setI(d.images.length > 1 ? 1 : 0);
-          setCardImageLoading(true);
         })
         .catch(() => {})
         .finally(() => setLoading(false));
@@ -100,19 +69,7 @@ export default function Card({
     return () => io.disconnect();
   }, [initialT, load]);
 
-  const images = t?.images ?? [];
   const schedule = t?.schedule ?? [];
-  const caption = t?.caption?.trim() ?? "";
-  const showList = listView && schedule.length > 0;
-  const idx = Math.min(i, Math.max(0, images.length - 1));
-  const prev = () => {
-    setCardImageLoading(true);
-    setI((n) => (n - 1 + images.length) % images.length);
-  };
-  const next = () => {
-    setCardImageLoading(true);
-    setI((n) => (n + 1) % images.length);
-  };
 
   return (
     <div
@@ -155,29 +112,7 @@ export default function Card({
               <span className="h-1.5 w-1.5 rounded-full bg-accent" />
               Timetable
             </span>
-          ) : (
-            images.length > 0 && (
-              <span className="rounded-full bg-surface-2 px-2.5 py-0.5 text-[11px] font-medium text-muted">
-                Latest
-              </span>
-            )
-          )}
-          {schedule.length > 0 && (
-            <button
-              type="button"
-              onClick={() => setListView((v) => !v)}
-              title={showList ? "Show timetable image" : "Show class list"}
-              aria-label={showList ? "Show timetable image" : "Show class list"}
-              aria-pressed={showList}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-accent text-white transition-colors hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-accent/40"
-            >
-              {showList ? (
-                <ImageIcon className="h-4 w-4" />
-              ) : (
-                <List className="h-4 w-4" />
-              )}
-            </button>
-          )}
+          ) : null}
           <button
             type="button"
             onClick={() => setForceOpen(true)}
@@ -191,81 +126,18 @@ export default function Card({
         </div>
       </div>
 
-      <div className="group relative aspect-square w-full overflow-hidden border-y border-line bg-canvas">
-        {showList ? (
-          <ScheduleList sessions={schedule} matchSession={matchSession} />
-        ) : images.length ? (
-          <>
-            <button
-              type="button"
-              onClick={() => setOpen(true)}
-              className="block h-full w-full cursor-zoom-in"
-              aria-label="Open image"
-            >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={src(images[idx])}
-                alt={`${name} timetable ${idx + 1}`}
-                loading="lazy"
-                // cached imgs are already complete before onLoad attaches → fire manually, else spinner sticks
-                ref={(el) => {
-                  if (el?.complete) setCardImageLoading(false);
-                }}
-                onLoad={() => setCardImageLoading(false)}
-                onError={() => setCardImageLoading(false)}
-                className="h-full w-full object-contain"
-              />
-            </button>
-            {loading && (
-              <div className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-canvas/75 backdrop-blur-[2px]">
-                <div className="h-12 w-12 animate-spin rounded-full border-4 border-accent-soft border-t-accent" />
-                <span className="animate-pulse rounded-full bg-surface px-3 py-1 text-[11px] font-medium text-accent-ink shadow-sm">
-                  Re-scraping…
-                </span>
-              </div>
-            )}
-            {cardImageLoading && !loading && (
-              <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-canvas/50 backdrop-blur-[1px] transition-opacity duration-150">
-                <div className="h-8 w-8 animate-spin rounded-full border-4 border-accent-soft border-t-accent" />
-              </div>
-            )}
-            {images.length > 1 && (
-              <>
-                <Arrow side="left" onClick={prev} />
-                <Arrow side="right" onClick={next} />
-              </>
-            )}
-            {(images.length > 1 || caption) && (
-              <div className="pointer-events-none absolute inset-x-0 bottom-0 flex flex-col items-center gap-2 bg-gradient-to-t from-black/75 via-black/45 to-transparent px-3 pb-3 pt-10">
-                {images.length > 1 && (
-                  <div className="flex gap-1.5">
-                    {images.map((_, n) => (
-                      <span
-                        key={n}
-                        className={`h-1.5 rounded-full transition-all duration-200 ${
-                          n === idx ? "w-5 bg-white" : "w-1.5 bg-white/50"
-                        }`}
-                      />
-                    ))}
-                  </div>
-                )}
-                {caption && (
-                  <p className="line-clamp-2 w-full whitespace-pre-line text-center text-[11px] leading-snug text-white/90">
-                    {caption}
-                  </p>
-                )}
-              </div>
-            )}
-          </>
-        ) : loading ? (
+      <div className="relative h-80 w-full overflow-hidden border-y border-line bg-canvas">
+        {loading ? (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-surface-2">
             <div className="h-10 w-10 animate-spin rounded-full border-4 border-accent-soft border-t-accent" />
             <span className="animate-pulse text-xs text-muted">Loading…</span>
           </div>
+        ) : schedule.length > 0 ? (
+          <ScheduleList sessions={schedule} matchSession={matchSession} />
         ) : (
           <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center">
             <span className="text-sm text-muted">
-              {t?.error ? "Couldn't load" : "No post found"}
+              {t?.error ? "Couldn't load" : "No schedule found"}
             </span>
             {t?.error && (
               <span className="text-xs text-muted/70">{t.error}</span>
@@ -281,13 +153,6 @@ export default function Card({
         )}
       </div>
 
-      {t?.takenAt && (
-        <div className="flex h-9 items-center gap-1.5 border-t border-line px-4 text-xs text-muted">
-          <span className="font-medium text-ink">Posted</span>
-          {fmtDate(t.takenAt)}
-        </div>
-      )}
-
       {t?.postUrl ? (
         <a
           href={t.postUrl}
@@ -302,19 +167,6 @@ export default function Card({
         <div className="flex h-11 items-center justify-center border-t border-line text-sm font-medium text-muted">
           {loading ? "Loading…" : "No post"}
         </div>
-      )}
-
-      {open && (
-        <Lightbox
-          images={images}
-          index={idx}
-          name={name}
-          caption={caption}
-          postUrl={t?.postUrl ?? null}
-          onPrev={prev}
-          onNext={next}
-          onClose={() => setOpen(false)}
-        />
       )}
 
       {forceOpen && (
@@ -485,173 +337,3 @@ function ForceDialog({
   );
 }
 
-function Arrow({
-  side,
-  onClick,
-}: {
-  side: "left" | "right";
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-label={side === "left" ? "Previous" : "Next"}
-      className={`absolute top-1/2 -mt-[18px] ${
-        side === "left" ? "left-2" : "right-2"
-      } flex h-9 w-9 items-center justify-center rounded-full bg-surface/90 pb-0.5 text-xl leading-none text-ink opacity-0 shadow-sm backdrop-blur transition-all duration-150 hover:bg-surface focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 group-hover:opacity-100`}
-    >
-      {side === "left" ? "‹" : "›"}
-    </button>
-  );
-}
-
-function Lightbox({
-  images,
-  index,
-  name,
-  caption,
-  postUrl,
-  onPrev,
-  onNext,
-  onClose,
-}: {
-  images: string[];
-  index: number;
-  name: string;
-  caption: string;
-  postUrl: string | null;
-  onPrev: () => void;
-  onNext: () => void;
-  onClose: () => void;
-}) {
-  const [imgLoading, setImgLoading] = useState(true);
-
-  const handlePrev = useCallback(() => {
-    setImgLoading(true);
-    onPrev();
-  }, [onPrev]);
-
-  const handleNext = useCallback(() => {
-    setImgLoading(true);
-    onNext();
-  }, [onNext]);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-      else if (e.key === "ArrowLeft") handlePrev();
-      else if (e.key === "ArrowRight") handleNext();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, handlePrev, handleNext]);
-
-  const touchX = useRef<number | null>(null);
-  const onTouchStart = (e: React.TouchEvent) => {
-    // single finger only — a 2nd finger (pinch-zoom) nulls this so the swipe doesn't change slides
-    touchX.current = e.touches.length === 1 ? e.touches[0].clientX : null;
-  };
-  const onTouchEnd = (e: React.TouchEvent) => {
-    if (touchX.current === null) return;
-    const dx = e.changedTouches[0].clientX - touchX.current;
-    touchX.current = null;
-    if (Math.abs(dx) > 50) (dx < 0 ? handleNext : handlePrev)();
-  };
-
-  if (typeof document === "undefined") return null;
-
-  return createPortal(
-    <div
-      onClick={onClose}
-      onTouchStart={onTouchStart}
-      onTouchEnd={onTouchEnd}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4"
-    >
-      <div className="absolute left-4 top-4 flex items-center gap-3 text-sm font-medium text-white/90">
-        <span>
-          {name}
-          {images.length > 1 && (
-            <span className="ml-2 text-white/50">
-              {index + 1}/{images.length}
-            </span>
-          )}
-        </span>
-        {postUrl && (
-          <a
-            href={postUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={(e) => e.stopPropagation()}
-            className="rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-white backdrop-blur transition-colors hover:bg-white/20"
-          >
-            View post ↗
-          </a>
-        )}
-      </div>
-      <button
-        type="button"
-        onClick={onClose}
-        aria-label="Close"
-        className="absolute right-4 top-4 flex h-10 w-10 items-center justify-center rounded-full bg-white/10 pb-1 text-2xl leading-none text-white backdrop-blur transition-colors hover:bg-white/20"
-      >
-        ×
-      </button>
-      {images.length > 1 && (
-        <>
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              handlePrev();
-            }}
-            aria-label="Previous"
-            className="absolute left-2 top-1/2 -mt-7 flex h-14 w-14 items-center justify-center rounded-full bg-white/10 pb-1 text-4xl text-white backdrop-blur transition-colors hover:bg-white/20 sm:left-6"
-          >
-            ‹
-          </button>
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              handleNext();
-            }}
-            aria-label="Next"
-            className="absolute right-2 top-1/2 -mt-7 flex h-14 w-14 items-center justify-center rounded-full bg-white/10 pb-1 text-4xl text-white backdrop-blur transition-colors hover:bg-white/20 sm:right-6"
-          >
-            ›
-          </button>
-        </>
-      )}
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src={src(images[index])}
-        alt={`${name} timetable ${index + 1}`}
-        // cached imgs are already complete before onLoad attaches → fire manually, else spinner sticks
-        ref={(el) => {
-          if (el?.complete) setImgLoading(false);
-        }}
-        onLoad={() => setImgLoading(false)}
-        onError={() => setImgLoading(false)}
-        onClick={(e) => e.stopPropagation()}
-        className="max-h-full max-w-full rounded-lg object-contain shadow-2xl"
-      />
-      {imgLoading && (
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/30 backdrop-blur-[2px] transition-opacity duration-150">
-          <div className="h-12 w-12 animate-spin rounded-full border-4 border-white/20 border-t-white" />
-        </div>
-      )}
-      {caption && (
-        <div
-          onClick={(e) => e.stopPropagation()}
-          className="absolute inset-x-0 bottom-0 max-h-[30%] overflow-y-auto bg-gradient-to-t from-black/90 to-transparent px-4 pb-5 pt-12"
-        >
-          <p className="mx-auto max-w-2xl whitespace-pre-line text-center text-sm leading-relaxed text-white/90">
-            {caption}
-          </p>
-        </div>
-      )}
-    </div>,
-    document.body,
-  );
-}

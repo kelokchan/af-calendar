@@ -46,8 +46,10 @@ export const to12h = (t: string) => {
 export const titleCase = (s: string) =>
   s.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
 
-// Normalized post, source-agnostic.
-type Post = {
+// Normalized post, source-agnostic. Exported so the local Playwright sync script
+// (scripts/sync.ts) can feed posts into the same pick/classify/extract pipeline
+// the Apify path uses — see syncTimetableFromPosts.
+export type Post = {
   caption: string;
   images: string[];
   url: string | null;
@@ -63,6 +65,28 @@ function looksLikeTimetable(caption: string): boolean {
   const c = caption.toLowerCase();
   if (/timetable/.test(c)) return true;
   return /schedule/.test(c) && /\b(gx|group|class|exercise|workout)\b/.test(c);
+}
+
+// Stronger caption signal used to PICK the schedule post from the caption alone,
+// so we can skip the multi-image vision classifier and OCR only the chosen post.
+// Covers the keyword heuristic plus the date captions gyms actually use:
+//   • weekly range — "29 Jun - 5 Jul", "15-30 June", "29/6 - 5/7"
+//   • a bare month / Month-Year as the WHOLE caption — "June", "June 2026"
+// extractSchedule still verifies the pick, so a false positive just yields zero
+// sessions and falls through to the classifier — no wrong data gets cached.
+const MONTHS = "jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec";
+function captionLikelyTimetable(caption: string): boolean {
+  const c = caption.toLowerCase();
+  if (looksLikeTimetable(c)) return true;
+  if (
+    new RegExp(
+      `\\b\\d{1,2}\\s*(${MONTHS})?[a-z]*\\s*(?:[-–—]|to)\\s*\\d{1,2}\\s*(${MONTHS})`,
+    ).test(c)
+  )
+    return true; // "29 Jun - 5 Jul"
+  if (/\b\d{1,2}\/\d{1,2}\s*[-–—]\s*\d{1,2}\/\d{1,2}/.test(c)) return true; // "29/6 - 5/7"
+  if (new RegExp(`^\\s*(${MONTHS})[a-z]*\\.?\\s*\\d{0,4}\\s*$`).test(c)) return true; // caption is just "June" / "June 2026"
+  return false;
 }
 
 // Gyms pin the current schedule, so prefer pinned. Priority:
@@ -190,7 +214,7 @@ async function scrapePosts(
 // call (powering the list view + cross-gym filter). Cache-miss path only, so
 // it runs ~once per gym per week.
 
-const N_CANDIDATES = 5; // top recent posts shown to the model; the miss-case timetable is recent, just outranked
+const N_CANDIDATES = 10; // cover images shown to the classifier; some gyms (e.g. SS2) bury the timetable under promos + pinned posts, so look deeper
 
 // 2.5-flash misread dense grids: on SS15 it drifted Saturday's 11:30 Hatha Yoga
 // into the empty 20:00 cell ~1 in 4 runs (time printed above icon, instructor
@@ -559,6 +583,71 @@ export async function ingestTimetables(entries: Timetable[]): Promise<void> {
     }),
   );
   await writeCache(mirrored);
+}
+
+// Shared "posts → cached Timetable" pipeline, used by the local Playwright sync
+// script (scripts/sync.ts). Given a handle and its recent posts (newest first),
+// it runs the same logic the Apify path uses: pick the likely timetable, let the
+// vision model confirm + extract the schedule, carry forward a confident prior
+// if this scrape didn't land on a real timetable, mirror images to Blob, cache,
+// and return. `posts[*].images` should be raw IG URLs (cdnUrl-normalized here).
+export async function syncTimetableFromPosts(
+  handle: string,
+  posts: Post[],
+): Promise<Timetable> {
+  const norm = posts.map((p) => ({ ...p, images: p.images.map(cdnUrl) }));
+  if (!norm.length) {
+    const t = errorFor(handle, new Error("no posts"));
+    await writeCache([t]);
+    return t;
+  }
+  let t = choose(handle, norm);
+
+  const fromPost = (p: Post, schedule: ClassSession[]): Timetable => ({
+    handle,
+    images: p.images,
+    caption: p.caption,
+    postUrl: p.url,
+    takenAt: p.takenAt,
+    matchedMonth: true,
+    schedule,
+  });
+
+  // 1) Caption-first (cheap): if a post's caption already names the schedule
+  // (keyword, or a weekly date-range / month caption), OCR just that one post —
+  // no need to send every candidate's cover image to the classifier.
+  let resolved = false;
+  const capIdx = norm.findIndex((p) => captionLikelyTimetable(p.caption));
+  if (capIdx >= 0) {
+    const p = norm[capIdx];
+    const schedule = await extractSchedule(p.images);
+    if (schedule.length) {
+      t = fromPost(p, schedule);
+      resolved = true;
+    }
+  }
+
+  // 2) Fallback (only when the caption gave nothing usable): the image classifier
+  // looks at the candidate covers to catch caption-less / keyword-less timetables.
+  if (!resolved) {
+    const idx = await classifyTimetable(norm);
+    if (idx >= 0 && norm[idx]) {
+      const p = norm[idx];
+      const schedule = await extractSchedule(p.images);
+      if (schedule.length) t = fromPost(p, schedule);
+    }
+  }
+  // Non-match scrape shouldn't clobber a confident schedule we already have.
+  if (!t.matchedMonth) {
+    const prior = await readPriorConfident(handle);
+    if (prior) {
+      await writeCache([prior]);
+      return prior;
+    }
+  }
+  if (!t.error) t.images = await persistImages(handle, t.images);
+  await writeCache([t]);
+  return t;
 }
 
 // Mirror IG CDN images into Vercel Blob. IG signs its URLs with a ~4-day `oe=`

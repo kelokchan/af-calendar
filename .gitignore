@@ -43,3 +43,9 @@ next-env.d.ts
 # scraped IG post cache
 /data/
 .sync-checkpoint.json
+
+# playwright IG login session (created by `npm run sync:login`)
+ig-session.json
+
+# weekly sync launchd log
+sync.log

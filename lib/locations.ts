@@ -181,4 +181,10 @@ export const LOCATIONS: Location[] = [
     lat: 3.094,
     lng: 101.676,
   },
+  {
+    handle: "afecosky",
+    name: "Eco Sky, Jalan Ipoh",
+    lat: 3.207,
+    lng: 101.687,
+  },
 ];

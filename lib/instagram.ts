@@ -7,6 +7,7 @@
 import { Redis } from "@upstash/redis";
 import { put } from "@vercel/blob";
 import { generateText, Output } from "ai";
+import { fetch as undiciFetch, ProxyAgent } from "undici";
 import { z } from "zod";
 
 // One parsed class slot from a timetable image. day/startTime are normalized so
@@ -668,6 +669,77 @@ export async function syncTimetableFromPosts(
   return t;
 }
 
+const IG_HEADERS = {
+  "user-agent": "Mozilla/5.0",
+  referer: "https://www.instagram.com/",
+};
+
+// Apify's Residential proxy needs the account's *proxy password*, which is
+// distinct from APIFY_TOKEN but retrievable with it. Fetch once and memoize
+// (Fluid Compute reuses the instance, so this is one lookup per warm function).
+// null = no token or the lookup failed → caller just skips the proxy hop.
+let proxyPwPromise: Promise<string | null> | undefined;
+function apifyProxyPassword(): Promise<string | null> {
+  const token = process.env.APIFY_TOKEN;
+  if (!token) return Promise.resolve(null);
+  return (proxyPwPromise ??= fetch(
+    `https://api.apify.com/v2/users/me?token=${token}`,
+    { cache: "no-store" },
+  )
+    .then((r) => (r.ok ? r.json() : null))
+    .then((j) => j?.data?.proxy?.password ?? null)
+    .catch(() => null));
+}
+
+// Fetch an IG CDN image as bytes. Direct first — that works from a residential IP
+// (the Mac sync). IG 403s datacenter IPs (the Vercel cron), so on ANY direct
+// failure retry through Apify's Residential proxy, whose exit IPs IG treats as
+// real users — this is what lets the cron mirror to Blob instead of storing a
+// raw URL that dies in ~4 days. Returns null only if both routes fail.
+// ponytail: the proxy hop is metered (Apify Residential, per-GB). It only fires
+// when the direct fetch fails, so the Mac sync never pays for it; only the
+// datacenter cron does. If IG ever stops blocking datacenter image fetches, the
+// direct path wins and the proxy goes cold on its own.
+async function fetchIgImage(
+  url: string,
+): Promise<{ buf: Buffer; contentType: string } | null> {
+  try {
+    const r = await fetch(url, {
+      headers: IG_HEADERS,
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (r.ok)
+      return {
+        buf: Buffer.from(await r.arrayBuffer()),
+        contentType: r.headers.get("content-type") ?? "image/jpeg",
+      };
+  } catch {
+    // network reset/timeout — fall through to the proxy
+  }
+  const pw = await apifyProxyPassword();
+  if (!pw) return null;
+  try {
+    // undici's fetch (not the Next-patched global) so `dispatcher` is honored.
+    const dispatcher = new ProxyAgent({
+      uri: "http://proxy.apify.com:8000",
+      token: `Basic ${Buffer.from(`groups-RESIDENTIAL:${pw}`).toString("base64")}`,
+    });
+    const r = await undiciFetch(url, {
+      headers: IG_HEADERS,
+      dispatcher,
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (r.ok)
+      return {
+        buf: Buffer.from(await r.arrayBuffer()),
+        contentType: r.headers.get("content-type") ?? "image/jpeg",
+      };
+  } catch {
+    // proxy unreachable / IG still refused — give up, caller keeps the raw URL
+  }
+  return null;
+}
+
 // Mirror IG CDN images into Vercel Blob. IG signs its URLs with a ~4-day `oe=`
 // expiry, but we cache a week — so the raw URLs can die before the entry does
 // and every card breaks. Blob URLs are permanent, so the cached timetable stays
@@ -686,25 +758,19 @@ async function persistImages(
   const week = weekAnchor().label;
   return Promise.all(
     urls.map(async (u, i) => {
+      // direct (residential) → Apify Residential proxy (datacenter cron)
+      const img = await fetchIgImage(u);
+      if (!img) {
+        console.warn(`[blob] fetch ${handle}#${i} failed (direct+proxy); keeping IG URL`);
+        return u; // last resort: raw IG URL (proxy /api/img can still try for ~4 days)
+      }
       try {
-        const res = await fetch(u, {
-          headers: {
-            "user-agent": "Mozilla/5.0",
-            referer: "https://www.instagram.com/",
-          },
-          signal: AbortSignal.timeout(15_000),
-        });
-        if (!res.ok) {
-          console.warn(`[blob] fetch ${handle}#${i} → HTTP ${res.status}; keeping IG URL`);
-          return u; // fall back to IG URL (proxy can still try)
-        }
-        // Buffer the bytes — passing a web ReadableStream (res.body) to put()
-        // is unreliable in Node and silently fails; a Buffer always works.
-        const buf = Buffer.from(await res.arrayBuffer());
-        const { url } = await put(`tt/${week}/${handle}-${i}.jpg`, buf, {
+        // Buffer the bytes — passing a web ReadableStream to put() is unreliable
+        // in Node and silently fails; a Buffer always works.
+        const { url } = await put(`tt/${week}/${handle}-${i}.jpg`, img.buf, {
           access: "public",
           allowOverwrite: true,
-          contentType: res.headers.get("content-type") ?? "image/jpeg",
+          contentType: img.contentType,
         });
         return url;
       } catch (e) {

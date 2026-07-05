@@ -7,7 +7,6 @@
 import { Redis } from "@upstash/redis";
 import { put } from "@vercel/blob";
 import { generateText, Output } from "ai";
-import { fetch as undiciFetch, ProxyAgent } from "undici";
 import { z } from "zod";
 
 // One parsed class slot from a timetable image. day/startTime are normalized so
@@ -86,7 +85,8 @@ export function captionLikelyTimetable(caption: string): boolean {
   )
     return true; // "29 Jun - 5 Jul"
   if (/\b\d{1,2}\/\d{1,2}\s*[-–—]\s*\d{1,2}\/\d{1,2}/.test(c)) return true; // "29/6 - 5/7"
-  if (new RegExp(`^\\s*(${MONTHS})[a-z]*\\.?\\s*\\d{0,4}\\s*$`).test(c)) return true; // caption is just "June" / "June 2026"
+  if (new RegExp(`^\\s*(${MONTHS})[a-z]*\\.?\\s*\\d{0,4}\\s*$`).test(c))
+    return true; // caption is just "June" / "June 2026"
   return false;
 }
 
@@ -720,6 +720,9 @@ async function fetchIgImage(
   if (!pw) return null;
   try {
     // undici's fetch (not the Next-patched global) so `dispatcher` is honored.
+    // Dynamic import: undici pulls in node:net, which must stay out of the
+    // client bundle (this lib's pure helpers are imported by client components).
+    const { fetch: undiciFetch, ProxyAgent } = await import("undici");
     const dispatcher = new ProxyAgent({
       uri: "http://proxy.apify.com:8000",
       token: `Basic ${Buffer.from(`groups-RESIDENTIAL:${pw}`).toString("base64")}`,
@@ -751,7 +754,9 @@ async function persistImages(
   urls: string[],
 ): Promise<string[]> {
   if (!process.env.BLOB_READ_WRITE_TOKEN) {
-    console.warn(`[blob] no BLOB_READ_WRITE_TOKEN — keeping IG URLs for ${handle}`);
+    console.warn(
+      `[blob] no BLOB_READ_WRITE_TOKEN — keeping IG URLs for ${handle}`,
+    );
     return urls;
   }
   if (!urls.length) return urls;
@@ -761,7 +766,9 @@ async function persistImages(
       // direct (residential) → Apify Residential proxy (datacenter cron)
       const img = await fetchIgImage(u);
       if (!img) {
-        console.warn(`[blob] fetch ${handle}#${i} failed (direct+proxy); keeping IG URL`);
+        console.warn(
+          `[blob] fetch ${handle}#${i} failed (direct+proxy); keeping IG URL`,
+        );
         return u; // last resort: raw IG URL (proxy /api/img can still try for ~4 days)
       }
       try {

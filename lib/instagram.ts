@@ -747,8 +747,9 @@ async function fetchIgImage(
 // Mirror IG CDN images into Vercel Blob. IG signs its URLs with a ~4-day `oe=`
 // expiry, but we cache a week — so the raw URLs can die before the entry does
 // and every card breaks. Blob URLs are permanent, so the cached timetable stays
-// viewable all week. Pathed by the cache week so each week's scrape writes fresh
-// URLs (a force-refresh or rollover never serves a stale-cached old image).
+// viewable all week. NOTE the path is stable within a week and served with a
+// 30-day max-age, so a within-week overwrite reuses the same URL and browsers
+// keep the old bytes — Card.tsx appends `?v=<takenAt>` to the Blob URL to bust it.
 // No token (local dev) → return IG URLs unchanged (served via /api/img).
 async function persistImages(
   handle: string,

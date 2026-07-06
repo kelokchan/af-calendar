@@ -100,7 +100,17 @@ export default function Card({
     return () => io.disconnect();
   }, [initialT, load]);
 
-  const images = t?.images ?? [];
+  // Blob image paths are stable per week (…handle-0.jpg) with a 30-day max-age, so
+  // a within-week overwrite reuses the same URL and browsers keep serving the old
+  // bytes. Tag each Blob URL with the post date so a new post → new URL → refetch.
+  // IG URLs (proxied via /api/img, and short-lived anyway) are left untouched.
+  // ponytail: busts on post date, not content hash — a same-post in-place image
+  // edit (rare) won't bust. Switch to a content hash in persistImages if it bites.
+  const images = (t?.images ?? []).map((u) =>
+    t?.takenAt && !/cdninstagram\.com|fbcdn\.net/.test(u)
+      ? `${u}?v=${t.takenAt}`
+      : u,
+  );
   const schedule = t?.schedule ?? [];
   const caption = t?.caption?.trim() ?? "";
   const showList = listView && schedule.length > 0;

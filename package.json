@@ -10,7 +10,7 @@
     "sync": "node --env-file=.env --import tsx scripts/sync.ts",
     "sync:login": "node --env-file=.env --import tsx scripts/sync.ts --login",
     "flush": "node --env-file=.env --import tsx scripts/flush.ts",
-    "schedule:install": "cp scripts/com.kelok.afcalendar.sync.plist \"$HOME/Library/LaunchAgents/\" && launchctl unload \"$HOME/Library/LaunchAgents/com.kelok.afcalendar.sync.plist\" 2>/dev/null; launchctl load \"$HOME/Library/LaunchAgents/com.kelok.afcalendar.sync.plist\" && echo 'Weekly sync scheduled: Sunday 22:30. Logs -> sync.log'",
+    "schedule:install": "cp scripts/com.kelok.afcalendar.sync.plist \"$HOME/Library/LaunchAgents/\" && launchctl unload \"$HOME/Library/LaunchAgents/com.kelok.afcalendar.sync.plist\" 2>/dev/null; launchctl load \"$HOME/Library/LaunchAgents/com.kelok.afcalendar.sync.plist\" && echo 'Weekly sync scheduled: Monday 01:00. Logs -> sync.log'",
     "schedule:uninstall": "launchctl unload \"$HOME/Library/LaunchAgents/com.kelok.afcalendar.sync.plist\" 2>/dev/null; rm -f \"$HOME/Library/LaunchAgents/com.kelok.afcalendar.sync.plist\" && echo 'Weekly sync removed.'",
     "schedule:run": "launchctl start com.kelok.afcalendar.sync && echo 'Triggered now — see sync.log'"
   },

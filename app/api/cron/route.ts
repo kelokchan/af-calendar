@@ -5,7 +5,7 @@ import { fetchTimetable, getCached } from "@/lib/instagram";
 // sync (Playwright → /api/ingest): it writes full-res carousel images mirrored to
 // permanent Blob URLs plus the parsed schedule straight to Redis. This cron is
 // only a safety net for handles that sync missed (Mac asleep, IG threw on a gym,
-// etc.). It runs LATER — Mon 06:00 MYT, see vercel.json — AFTER the rollover, the
+// etc.). It runs LATER — Mon 00:00 MYT, see vercel.json — AFTER the rollover, the
 // Mac sync, and the Sunday-night posting window, and force-scrapes ONLY the
 // handles that don't already hold this week's confident timetable.
 //
@@ -32,8 +32,9 @@ const CHUNK = 12;
 // A cached entry counts as "confident" (leave it alone) when it isn't an error
 // and matched a real timetable. Anything else — missing, negative-cached error,
 // or a low-confidence non-match — is a gap worth force-scraping.
-const isConfident = (t: { error?: string; matchedMonth: boolean } | undefined) =>
-  !!t && !t.error && t.matchedMonth;
+const isConfident = (
+  t: { error?: string; matchedMonth: boolean } | undefined,
+) => !!t && !t.error && t.matchedMonth;
 
 export async function GET(req: Request) {
   // Vercel auto-sends this header on cron invocations once CRON_SECRET is set.

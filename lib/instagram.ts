@@ -431,7 +431,7 @@ export async function extractSchedule(
 // is the Monday that labels the cache week (MYT); the week actually opens — and
 // the key expires — at the prior Sunday 22:00 MYT. Gyms post a fresh weekly
 // timetable each Sunday night, so a handle is scraped at most once per week and
-// the Sun-22:00 cron warms the fresh schedule; week rollover ⇒ new key
+// the Mon-00:00 MYT cron warms the fresh schedule; week rollover ⇒ new key
 // namespace ⇒ everyone re-scrapes the new week's schedule automatically.
 // Per-key (vs one blob) means concurrent renders never clobber each other's
 // writes, and only scraped handles are written. Successes live to week end;
@@ -453,7 +453,8 @@ const redis =
     : null;
 
 // The cache week opens at Sunday 22:00 MYT — the moment gyms have posted the new
-// week's timetable, and when the weekly cron fires to pre-warm it. We anchor on
+// week's timetable; the weekly cron then fires 2h later (Mon 00:00 MYT) to fill
+// any gaps the Mac sync missed. We anchor on
 // that boundary by shifting the clock forward 2h so it reads as a Monday 00:00 in
 // this frame, reuse the Monday math, then subtract the shift back for the real
 // instant. The label stays the opening Monday's ISO date (stable namespace);

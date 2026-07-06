@@ -32,8 +32,7 @@ import {
 } from "../lib/instagram";
 
 // Timestamped logger so sync.log lines are self-dating across weekly runs.
-const ts = () =>
-  new Date().toLocaleTimeString("en-GB", { hour12: false });
+const ts = () => new Date().toLocaleTimeString("en-GB", { hour12: false });
 const log = (msg: string) => console.log(`${ts()} ${msg}`);
 const snippet = (s: string, n = 40) => {
   const one = s.replace(/\s+/g, " ").trim();
@@ -61,7 +60,9 @@ async function mapLimit<T, R>(
       out[i] = await fn(items[i], i);
     }
   }
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, worker),
+  );
   return out;
 }
 
@@ -71,7 +72,10 @@ const isPostMedia = (u: string) =>
   !/s150x150|s320x320|profile_pic|150x150/.test(u); // drop avatars/thumbnails
 
 // Collect up to POSTS_PER_PROFILE recent post permalinks from a profile page.
-async function postLinks(ctx: BrowserContext, handle: string): Promise<string[]> {
+async function postLinks(
+  ctx: BrowserContext,
+  handle: string,
+): Promise<string[]> {
   const page = await ctx.newPage();
   try {
     await page.goto(`https://www.instagram.com/${handle}/`, {
@@ -192,17 +196,25 @@ async function collectPostImages(page: Page): Promise<string[]> {
 }
 
 // Read one post: full-res image(s) (carousel-aware), caption, date.
-async function readPost(ctx: BrowserContext, url: string): Promise<Post | null> {
+async function readPost(
+  ctx: BrowserContext,
+  url: string,
+): Promise<Post | null> {
   const page = await ctx.newPage();
   try {
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT });
+    await page.goto(url, {
+      waitUntil: "domcontentloaded",
+      timeout: NAV_TIMEOUT,
+    });
     await page.waitForTimeout(1500);
     const meta = await page.evaluate(() => {
       const m = (p: string) =>
-        document.querySelector(`meta[property="${p}"]`)?.getAttribute("content") ??
-        "";
+        document
+          .querySelector(`meta[property="${p}"]`)
+          ?.getAttribute("content") ?? "";
       const dt =
-        document.querySelector("time[datetime]")?.getAttribute("datetime") ?? null;
+        document.querySelector("time[datetime]")?.getAttribute("datetime") ??
+        null;
       return { ogImage: m("og:image"), ogDesc: m("og:description"), dt };
     });
     const postImgs = await collectPostImages(page);
@@ -254,7 +266,9 @@ async function scrapeHandle(
     await new Promise((r) => setTimeout(r, 400)); // gentle pacing between post loads
   }
   if (!posts.length && links.length)
-    console.log(`    [debug] ${handle}: ${links.length} links but all posts unreadable`);
+    console.log(
+      `    [debug] ${handle}: ${links.length} links but all posts unreadable`,
+    );
   return { posts, links: links.length };
 }
 
@@ -274,9 +288,7 @@ async function main() {
       console.log(
         "\n>>> Log into Instagram in the opened window. After your feed loads, press ENTER here.",
       );
-      await new Promise<void>((res) =>
-        process.stdin.once("data", () => res()),
-      );
+      await new Promise<void>((res) => process.stdin.once("data", () => res()));
       await ctx.storageState({ path: SESSION_FILE });
       console.log(`Saved session to ${SESSION_FILE}`);
       await browser.close();
@@ -313,8 +325,12 @@ async function main() {
     );
 
     type Status = "ok" | "no-posts" | "no-tt" | "carried" | "fail";
-    const results: { handle: string; status: Status; detail: string; secs: string }[] =
-      [];
+    const results: {
+      handle: string;
+      status: Status;
+      detail: string;
+      secs: string;
+    }[] = [];
     let done = 0;
 
     await mapLimit(targets, CONCURRENCY, async (loc) => {
@@ -372,7 +388,9 @@ async function main() {
     log(
       `ok=${by("ok").length} carried=${by("carried").length} no-tt=${by("no-tt").length} no-posts=${by("no-posts").length} fail=${by("fail").length} · ${mins} min`,
     );
-    log(`with a timetable: ${by("ok").length + by("carried").length}/${targets.length}`);
+    log(
+      `with a timetable: ${by("ok").length + by("carried").length}/${targets.length}`,
+    );
     const attention = results.filter((r) => r.status !== "ok");
     if (attention.length) {
       log(`needs attention (${attention.length}):`);
@@ -380,6 +398,21 @@ async function main() {
         log(`   - [${r.status}] ${r.handle}: ${r.detail}`);
     }
     log(`done in ${mins} min`);
+
+    // Bust the homepage's 1h ISR cache so this run shows immediately instead of
+    // after the next revalidation. Fire-and-forget; skips if SITE_URL is unset.
+    const site = process.env.SITE_URL;
+    if (site) {
+      try {
+        const r = await fetch(`${site}/api/revalidate`, {
+          method: "POST",
+          headers: { authorization: `Bearer ${process.env.CRON_SECRET}` },
+        });
+        log(`revalidate ${site}: ${r.status}`);
+      } catch (e) {
+        log(`revalidate failed: ${e instanceof Error ? e.message : e}`);
+      }
+    }
   } finally {
     await browser?.close();
   }

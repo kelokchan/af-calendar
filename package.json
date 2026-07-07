@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@upstash/redis": "^1.38.0",
+    "@vercel/analytics": "^2.0.1",
     "@vercel/blob": "^2.4.1",
     "ai": "^6.0.209",
     "lucide-react": "^1.21.0",

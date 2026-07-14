@@ -747,9 +747,14 @@ async function fetchIgImage(
 // Mirror IG CDN images into Vercel Blob. IG signs its URLs with a ~4-day `oe=`
 // expiry, but we cache a week — so the raw URLs can die before the entry does
 // and every card breaks. Blob URLs are permanent, so the cached timetable stays
-// viewable all week. NOTE the path is stable within a week and served with a
-// 30-day max-age, so a within-week overwrite reuses the same URL and browsers
-// keep the old bytes — Card.tsx appends `?v=<takenAt>` to the Blob URL to bust it.
+// viewable all week.
+//
+// The path is CONTENT-ADDRESSED (…-<sha256 prefix>.jpg). Blob serves a 30-day
+// browser max-age and its CDN ignores query strings, so any scheme that reuses a
+// pathname for new bytes serves stale images until the cache expires — a `?v=`
+// query busts neither. Hashing the bytes means the URL changes iff the image
+// does: a re-scrape that finds the same image rewrites the same URL (no churn),
+// a changed image lands on a URL nothing has cached.
 // No token (local dev) → return IG URLs unchanged (served via /api/img).
 async function persistImages(
   handle: string,
@@ -773,14 +778,22 @@ async function persistImages(
         );
         return u; // last resort: raw IG URL (proxy /api/img can still try for ~4 days)
       }
+      // Web Crypto (global) rather than node:crypto — this module's pure helpers
+      // are imported by client components, so keep node builtins out of it.
+      const digest = await crypto.subtle.digest("SHA-256", img.buf);
+      const hash = Buffer.from(digest).toString("hex").slice(0, 12);
       try {
         // Buffer the bytes — passing a web ReadableStream to put() is unreliable
         // in Node and silently fails; a Buffer always works.
-        const { url } = await put(`tt/${week}/${handle}-${i}.jpg`, img.buf, {
-          access: "public",
-          allowOverwrite: true,
-          contentType: img.contentType,
-        });
+        const { url } = await put(
+          `tt/${week}/${handle}-${i}-${hash}.jpg`,
+          img.buf,
+          {
+            access: "public",
+            allowOverwrite: true,
+            contentType: img.contentType,
+          },
+        );
         return url;
       } catch (e) {
         console.error(

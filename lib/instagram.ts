@@ -555,6 +555,18 @@ async function writeCache(
   }
 }
 
+// Durable trace that the weekly cron fired. The cron is a gap-filler, so a run
+// where every handle is already confident writes nothing at all — leaving no way
+// to tell a healthy no-op from a cron that never fired. Stamp it. Kept 5 weeks,
+// so the last few runs are always inspectable.
+export async function recordCronRun(summary: object): Promise<void> {
+  await redis?.set(
+    "af-cal:cron:last",
+    { at: new Date().toISOString(), ...summary },
+    { ex: 5 * 7 * 24 * 60 * 60 },
+  );
+}
+
 // ---- Public API -------------------------------------------------------------
 
 // Division of labour: the weekly browser task (Sunday 22:30 MYT) BATCH-populates

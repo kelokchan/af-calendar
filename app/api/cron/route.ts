@@ -1,5 +1,5 @@
 import { LOCATIONS } from "@/lib/locations";
-import { fetchTimetable, getCached } from "@/lib/instagram";
+import { fetchTimetable, getCached, recordCronRun } from "@/lib/instagram";
 
 // Weekly GAP-FILLER via Apify. The PRIMARY populator is the Sunday-22:30-MYT Mac
 // sync (Playwright → /api/ingest): it writes full-res carousel images mirrored to
@@ -68,11 +68,13 @@ export async function GET(req: Request) {
       if (good) ok++;
       else failed++;
   }
-  return Response.json({
+  const summary = {
     handles: handles.length,
     skipped: handles.length - todo.length, // already-confident, left untouched
     filled: todo.length,
     ok,
     failed,
-  });
+  };
+  await recordCronRun(summary);
+  return Response.json(summary);
 }
